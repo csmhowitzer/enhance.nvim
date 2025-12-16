@@ -78,12 +78,15 @@ require("enhance").setup({
 {
   name = "Production DB",
   type = "sqlserver",  -- or "sql server", "mssql"
-  host = "localhost",
+  server = "localhost",  -- or use 'host'
   database = "MyDatabase",
   user = "sa",
   password = "YourPassword",
+  trust_server_certificate = true,  -- Optional: default is true (for self-signed certs)
 }
 ```
+
+**Note:** `trust_server_certificate` defaults to `true` for compatibility with development/test environments using self-signed certificates. Set to `false` if you require strict certificate validation.
 
 #### SQLite
 

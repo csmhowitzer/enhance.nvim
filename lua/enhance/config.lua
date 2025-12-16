@@ -7,13 +7,14 @@ local M = {}
 ---@field name string Connection display name
 ---@field type string Database type (sqlite, sqlserver, mysql, postgres)
 ---@field path string? Path to database file (for sqlite)
----@field host string? Database host (mysql, postgres)
----@field server string? Database server (sqlserver)
+---@field host string? Database host (mysql, postgres, sqlserver)
+---@field server string? Database server (sqlserver - preferred over host)
 ---@field port number? Database port
 ---@field database string? Database name
 ---@field user string? Username
 ---@field username string? Username (alternative)
 ---@field password string? Password
+---@field trust_server_certificate boolean? Trust server certificate for SQL Server (default: true)
 
 ---Get default configuration
 ---@return table Default configuration

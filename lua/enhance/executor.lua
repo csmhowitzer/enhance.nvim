@@ -34,19 +34,25 @@ function M.test_connection(connection)
     -- Test SQL Server connection
     local cmd = {
       'sqlcmd',
-      '-S', connection.server,
+      '-S', connection.server or connection.host,
       '-d', connection.database,
     }
 
-    if connection.user then
+    if connection.user or connection.username then
       table.insert(cmd, '-U')
-      table.insert(cmd, connection.user)
+      table.insert(cmd, connection.user or connection.username)
       if connection.password then
         table.insert(cmd, '-P')
         table.insert(cmd, connection.password)
       end
     else
       table.insert(cmd, '-E') -- Windows authentication
+    end
+
+    -- Trust server certificate (for self-signed certs)
+    -- Default to true for compatibility with most dev/test environments
+    if connection.trust_server_certificate ~= false then
+      table.insert(cmd, '-C')
     end
 
     table.insert(cmd, '-Q')
@@ -239,6 +245,12 @@ function M.execute_sqlserver(connection, query, query_bufnr)
   -- Use Windows Authentication if no user/password
   if not connection.user and not connection.username and not connection.password then
     table.insert(cmd, '-E')
+  end
+
+  -- Trust server certificate (for self-signed certs)
+  -- Default to true for compatibility with most dev/test environments
+  if connection.trust_server_certificate ~= false then
+    table.insert(cmd, '-C')
   end
 
   -- Output formatting

@@ -39,21 +39,39 @@ local last_results_buf = nil
 
 ---Get connection-specific tmp directory
 ---@param connection table Database connection
----@return string tmp_dir Path to tmp directory
+---@return string? tmp_dir Path to tmp directory, or nil on error
 local function get_connection_tmp_dir(connection)
   local base = vim.fn.stdpath('data') .. '/enhance.nvim'
   local conn_dir = base .. '/' .. connection.name .. '/tmp'
-  vim.fn.mkdir(conn_dir, 'p')
+
+  local ok, err = pcall(vim.fn.mkdir, conn_dir, 'p')
+  if not ok then
+    vim.notify(
+      string.format("Failed to create tmp directory: %s\nError: %s", conn_dir, err),
+      vim.log.levels.ERROR
+    )
+    return nil
+  end
+
   return conn_dir
 end
 
 ---Get connection-specific queries directory
 ---@param connection table Database connection
----@return string queries_dir Path to queries directory
+---@return string? queries_dir Path to queries directory, or nil on error
 local function get_connection_queries_dir(connection)
   local base = vim.fn.stdpath('data') .. '/enhance.nvim'
   local conn_dir = base .. '/' .. connection.name .. '/queries'
-  vim.fn.mkdir(conn_dir, 'p')
+
+  local ok, err = pcall(vim.fn.mkdir, conn_dir, 'p')
+  if not ok then
+    vim.notify(
+      string.format("Failed to create queries directory: %s\nError: %s", conn_dir, err),
+      vim.log.levels.ERROR
+    )
+    return nil
+  end
+
   return conn_dir
 end
 
@@ -159,6 +177,27 @@ local function remove_buffer_from_tracking(bufnr)
         end
         table.remove(buffers, i)
         return
+      end
+    end
+  end
+end
+
+---Clean up invalid buffers from tracking table
+---Removes entries for buffers that are no longer valid
+local function cleanup_invalid_buffers()
+  for conn_name, buffers in pairs(connection_buffers) do
+    local i = 1
+    while i <= #buffers do
+      local buf_info = buffers[i]
+      if not vim.api.nvim_buf_is_valid(buf_info.bufnr) then
+        -- Clean up associated result buffer if it exists
+        if buf_info.result_bufnr and vim.api.nvim_buf_is_valid(buf_info.result_bufnr) then
+          vim.api.nvim_buf_delete(buf_info.result_bufnr, { force = true })
+        end
+        table.remove(buffers, i)
+        -- Don't increment i, check same index again
+      else
+        i = i + 1
       end
     end
   end
@@ -738,6 +777,9 @@ local function refresh_explorer()
     return
   end
 
+  -- Clean up invalid buffers from tracking table
+  cleanup_invalid_buffers()
+
   -- Save cursor position
   local cursor_pos = nil
   if explorer_win and vim.api.nvim_win_is_valid(explorer_win) then
@@ -932,10 +974,21 @@ local function delete_file_impl(filepath)
     -- Save explorer visibility state
     local explorer_was_visible = explorer_win and vim.api.nvim_win_is_valid(explorer_win)
 
-    -- Delete the file
-    local success = vim.fn.delete(filepath)
-    if success ~= 0 then
-      vim.notify("Failed to delete file: " .. filepath, vim.log.levels.ERROR)
+    -- Delete the file with error handling
+    local ok, result = pcall(vim.fn.delete, filepath)
+    if not ok then
+      vim.notify(
+        string.format("Failed to delete file: %s\nError: %s", filepath, result),
+        vim.log.levels.ERROR
+      )
+      return
+    end
+
+    if result ~= 0 then
+      vim.notify(
+        string.format("Failed to delete file: %s\nReturn code: %d", filepath, result),
+        vim.log.levels.ERROR
+      )
       return
     end
 
@@ -1048,10 +1101,24 @@ local function handle_tmp_buffer_save(bufnr)
       local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
       -- Write to new location
-      vim.fn.writefile(lines, new_filepath)
+      local write_ok, write_err = pcall(vim.fn.writefile, lines, new_filepath)
+      if not write_ok then
+        vim.notify(
+          string.format("Failed to write file: %s\nError: %s", new_filepath, write_err),
+          vim.log.levels.ERROR
+        )
+        return
+      end
 
       -- Delete old tmp file
-      vim.fn.delete(filepath)
+      local delete_ok, delete_err = pcall(vim.fn.delete, filepath)
+      if not delete_ok then
+        vim.notify(
+          string.format("Warning: Failed to delete tmp file: %s\nError: %s", filepath, delete_err),
+          vim.log.levels.WARN
+        )
+        -- Continue anyway since the new file was saved successfully
+      end
 
       -- Update buffer name to new location
       pcall(vim.api.nvim_buf_set_name, bufnr, new_filepath)
@@ -2088,6 +2155,14 @@ function M.start()
     desc = "Handle saving enhance.nvim tmp buffers to queries directory"
   })
 
+  -- Set up autocmd to clean up buffer tracking when buffers are deleted
+  vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+    callback = function(args)
+      remove_buffer_from_tracking(args.buf)
+    end,
+    desc = "Clean up enhance.nvim buffer tracking on buffer deletion"
+  })
+
   -- Create buffer if needed
   if not explorer_buf or not vim.api.nvim_buf_is_valid(explorer_buf) then
     explorer_buf = vim.api.nvim_create_buf(false, true)
@@ -2485,13 +2560,15 @@ function M.delete_files_bulk(filenames)
     if confirmed then
       -- Delete all files
       local deleted_count = 0
+      local failed_files = {}
+
       for _, filepath in ipairs(filepaths) do
         -- Get buffer number if file is open
         local bufnr = vim.fn.bufnr(filepath)
 
-        -- Delete the file
-        local ok = vim.fn.delete(filepath)
-        if ok == 0 then
+        -- Delete the file with error handling
+        local ok, result = pcall(vim.fn.delete, filepath)
+        if ok and result == 0 then
           deleted_count = deleted_count + 1
 
           -- Close buffer if it was open
@@ -2513,6 +2590,10 @@ function M.delete_files_bulk(filenames)
             -- Delete the buffer
             vim.api.nvim_buf_delete(bufnr, { force = true })
           end
+        else
+          -- Track failed deletions
+          local filename = vim.fn.fnamemodify(filepath, ':t')
+          table.insert(failed_files, filename)
         end
       end
 
@@ -2520,7 +2601,23 @@ function M.delete_files_bulk(filenames)
       refresh_explorer()
 
       -- Show result
-      vim.notify(string.format("Deleted %d file%s", deleted_count, deleted_count > 1 and "s" or ""), vim.log.levels.INFO)
+      if deleted_count > 0 then
+        vim.notify(
+          string.format("Deleted %d file%s", deleted_count, deleted_count > 1 and "s" or ""),
+          vim.log.levels.INFO
+        )
+      end
+
+      if #failed_files > 0 then
+        vim.notify(
+          string.format("Failed to delete %d file%s: %s",
+            #failed_files,
+            #failed_files > 1 and "s" or "",
+            table.concat(failed_files, ", ")
+          ),
+          vim.log.levels.ERROR
+        )
+      end
     end
   end)
 end
@@ -2565,6 +2662,10 @@ M._build_explorer_content = build_explorer_content
 M._get_db_icon = get_db_icon
 M._get_node_icon = get_node_icon
 M._parse_line = parse_line
+M._cleanup_invalid_buffers = cleanup_invalid_buffers
+M._remove_buffer_from_tracking = remove_buffer_from_tracking
+M._get_connection_tmp_dir = get_connection_tmp_dir
+M._get_connection_queries_dir = get_connection_queries_dir
 
 -- Expose for results module
 M.associate_result_buffer = associate_result_buffer

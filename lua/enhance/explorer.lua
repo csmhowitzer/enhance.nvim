@@ -373,21 +373,26 @@ local function fetch_tables(connection)
     -- SQL Server: Query INFORMATION_SCHEMA
     local cmd = {
       'sqlcmd',
-      '-S', connection.server,
+      '-S', connection.server or connection.host,
       '-d', connection.database,
       '-h', '-1', -- Remove headers
       '-W', -- Remove trailing spaces
     }
 
-    if connection.user then
+    if connection.user or connection.username then
       table.insert(cmd, '-U')
-      table.insert(cmd, connection.user)
+      table.insert(cmd, connection.user or connection.username)
       if connection.password then
         table.insert(cmd, '-P')
         table.insert(cmd, connection.password)
       end
     else
       table.insert(cmd, '-E') -- Windows authentication
+    end
+
+    -- Trust server certificate (for self-signed certs)
+    if connection.trust_server_certificate ~= false then
+      table.insert(cmd, '-C')
     end
 
     table.insert(cmd, '-Q')
@@ -1630,19 +1635,24 @@ local function execute_query_for_script(connection, query)
   elseif db_type == "sqlserver" or db_type == "mssql" then
     local cmd = {
       'sqlcmd',
-      '-S', connection.server,
+      '-S', connection.server or connection.host,
       '-d', connection.database,
     }
 
-    if connection.user then
+    if connection.user or connection.username then
       table.insert(cmd, '-U')
-      table.insert(cmd, connection.user)
+      table.insert(cmd, connection.user or connection.username)
       if connection.password then
         table.insert(cmd, '-P')
         table.insert(cmd, connection.password)
       end
     else
       table.insert(cmd, '-E')
+    end
+
+    -- Trust server certificate (for self-signed certs)
+    if connection.trust_server_certificate ~= false then
+      table.insert(cmd, '-C')
     end
 
     table.insert(cmd, '-Q')

@@ -33,10 +33,11 @@ return {
           {
             name = "Production DB",
             type = "sqlserver",
-            host = "localhost",
+            server = "localhost",  -- or use 'host'
             database = "MyDatabase",
             user = "sa",
             password = "YourPassword",
+            trust_server_certificate = true,  -- Optional: default is true
           },
           {
             name = "Local SQLite",
@@ -125,6 +126,28 @@ require("enhance").setup({
   password = "secret",
 }
 ```
+
+### Connection Options Reference
+
+| Option | Type | Databases | Required | Default | Description |
+|--------|------|-----------|----------|---------|-------------|
+| `name` | string | All | ✅ | - | Display name for the connection |
+| `type` | string | All | ✅ | - | Database type: `sqlite`, `sqlserver`, `mysql`, `postgres` |
+| `path` | string | SQLite | ✅ | - | Path to database file |
+| `server` | string | SQL Server | ✅* | - | Server hostname (preferred over `host`) |
+| `host` | string | SQL Server, MySQL, PostgreSQL | ✅* | - | Server hostname |
+| `database` | string | SQL Server, MySQL, PostgreSQL | ✅ | - | Database name |
+| `user` | string | SQL Server, MySQL, PostgreSQL | ❌ | - | Username (SQL Server uses Windows auth if omitted) |
+| `username` | string | SQL Server, MySQL, PostgreSQL | ❌ | - | Alternative to `user` |
+| `password` | string | SQL Server, MySQL, PostgreSQL | ❌ | - | Password |
+| `port` | number | MySQL, PostgreSQL | ❌ | 3306 (MySQL), 5432 (PostgreSQL) | Server port |
+| `trust_server_certificate` | boolean | SQL Server | ❌ | `true` | Trust self-signed certificates |
+
+**Notes:**
+- For SQL Server: Use `server` (preferred) or `host` - both work
+- For SQL Server: `trust_server_certificate` defaults to `true` for dev/test compatibility
+- For SQL Server: Omit `user`/`password` to use Windows Authentication (adds `-E` flag)
+- For MySQL/PostgreSQL: `host` defaults to `localhost` if omitted
 
 ## Usage
 

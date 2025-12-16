@@ -237,3 +237,12 @@ SELECT * FROM users WHERE active = 1;
 
 **Solution**: Buffers are only tracked after executing a query. Execute a query first, then the buffer will appear in the explorer.
 
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Running tests
+- Code formatting standards
+- Linting guidelines
+- PR submission process
+- Bug report template
+

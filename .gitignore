@@ -1,0 +1,16 @@
+# Test output logs
+*.log
+
+# Test scripts (not part of tests/ directory)
+test_*.lua
+demo_*.lua
+
+# Neovim swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+

@@ -1,0 +1,488 @@
+*enhance.txt*    Database UI enhancement for Neovim
+
+Author: enhance.nvim
+License: MIT
+
+==============================================================================
+CONTENTS                                                    *enhance-contents*
+
+1. Introduction ............................ |enhance-introduction|
+2. Installation ............................ |enhance-installation|
+3. Configuration ........................... |enhance-configuration|
+4. Commands ................................ |enhance-commands|
+5. Functions ............................... |enhance-functions|
+6. Keymaps ................................. |enhance-keymaps|
+7. Workflow ................................ |enhance-workflow|
+8. Database Types .......................... |enhance-database-types|
+9. Examples ................................ |enhance-examples|
+10. Troubleshooting ........................ |enhance-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                         *enhance-introduction*
+
+enhance.nvim provides a pure Lua database interface for Neovim with an
+intelligent explorer UI and result formatting.
+
+Features:
+- Multi-database support: SQL Server, SQLite, MySQL, PostgreSQL
+- Tree-based explorer with drawer layout
+- Async query execution using jobstart
+- File management: tmp buffers, saved queries, result tracking
+- Bulk operations: delete multiple files with visual selection
+- Comprehensive health check diagnostics
+- Production-ready with 67 passing tests
+
+==============================================================================
+2. INSTALLATION                                        *enhance-installation*
+
+Using lazy.nvim:
+
+>lua
+    {
+      "yourusername/enhance.nvim",
+      config = function()
+        require("enhance").setup({
+          enabled = true,
+          connections = {
+            {
+              name = "Production DB",
+              type = "sqlserver",
+              host = "localhost",
+              database = "MyDatabase",
+              user = "sa",
+              password = "YourPassword",
+            }
+          },
+        })
+      end,
+    }
+<
+
+For local development:
+
+>lua
+    {
+      dir = "~/plugins/enhance.nvim",
+      name = "enhance",
+      build = ":helptags doc",
+      config = function()
+        require("enhance").setup({
+          connections = {
+            { name = "Local DB", type = "sqlite", path = "~/myapp.db" }
+          }
+        })
+      end,
+    }
+<
+
+==============================================================================
+3. CONFIGURATION                                      *enhance-configuration*
+
+Basic setup:
+
+>lua
+    require("enhance").setup({
+      enabled = true,
+      connections = {},
+    })
+<
+
+Configuration options:
+
+{enabled}                                                 *enhance-config-enabled*
+    Type: `boolean`
+    Default: `true`
+    
+    Enable or disable the plugin.
+
+{connections}                                             *enhance-config-connections*
+    Type: `table[]`
+    Default: `{}`
+    
+    List of database connections. Each connection is a table with
+    database-specific fields. See |enhance-database-types| for details.
+
+==============================================================================
+4. COMMANDS                                              *enhance-commands*
+
+:EnhanceStart                                            *:EnhanceStart*
+    Start enhance workspace with explorer drawer and query editor.
+    Opens a three-panel layout: explorer (left), query editor (center),
+    and results (bottom, hidden until first query execution).
+
+:EnhanceStop                                             *:EnhanceStop*
+    Stop enhance workspace and close all windows.
+    Closes explorer, query editor, and results windows.
+
+:EnhanceExplorer                                         *:EnhanceExplorer*
+    Toggle database explorer drawer.
+    Shows/hides the left drawer with connection tree.
+
+:EnhanceResults                                          *:EnhanceResults*
+    Toggle results window.
+    Shows/hides the bottom results panel.
+
+:EnhanceQuery                                            *:EnhanceQuery*
+    Create new query buffer.
+    Opens a new query editor for the current connection.
+
+:EnhanceDeleteFile [{filename}]                          *:EnhanceDeleteFile*
+    Delete file (current buffer or specified filename).
+    If {filename} is provided, deletes that file.
+    Otherwise, deletes the file in the current buffer.
+
+:EnhanceToggle                                           *:EnhanceToggle*
+    Toggle plugin enabled/disabled.
+    Disables/enables all enhance.nvim functionality.
+
+==============================================================================
+5. FUNCTIONS                                            *enhance-functions*
+
+enhance.setup({opts})                                    *enhance.setup()*
+    Configure enhance.nvim with the provided options.
+    
+    Parameters:
+      {opts} (table?) Configuration options
+        • enabled (boolean): Enable/disable plugin
+        • connections (table[]): Database connections
+    
+    Example:
+>lua
+    require("enhance").setup({
+      enabled = true,
+      connections = {
+        { name = "My DB", type = "sqlite", path = "~/db.db" }
+      }
+    })
+<
+
+enhance.toggle()                                         *enhance.toggle()*
+    Toggle plugin enabled/disabled state.
+
+    Example:
+>lua
+    require("enhance").toggle()
+<
+
+enhance.get_config()                                     *enhance.get_config()*
+    Get current configuration.
+
+    Returns:
+      (table) Current configuration table
+
+    Example:
+>lua
+    local config = require("enhance").get_config()
+    print(vim.inspect(config.connections))
+<
+
+==============================================================================
+6. KEYMAPS                                                *enhance-keymaps*
+
+Explorer Keymaps                                         *enhance-keymaps-explorer*
+
+<CR>                    Expand/collapse connection or open item
+q                       Close explorer drawer
+<leader>de              Toggle explorer drawer
+dd                      Delete file under cursor
+D                       Delete file under cursor (same as dd)
+d (visual)              Delete selected files in visual mode
+D (visual)              Delete selected files in visual mode
+
+Query Buffer Keymaps                                     *enhance-keymaps-query*
+
+<F5>                    Execute query
+                        • Normal mode: Execute entire buffer
+                        • Visual mode: Execute selected text
+:w                      Save query (prompts for filename if new)
+
+Results Buffer Keymaps                                   *enhance-keymaps-results*
+
+q                       Close results window
+
+==============================================================================
+7. WORKFLOW                                              *enhance-workflow*
+
+Basic workflow for using enhance.nvim:
+
+1. Start workspace:
+>vim
+    :EnhanceStart
+<
+
+2. Connect to database:
+   - Press <CR> on a connection in the explorer to expand it
+
+3. Create new query:
+   - Press <CR> on "New Query" in the explorer
+   - Or run `:EnhanceQuery`
+
+4. Write SQL query:
+   - Type your SQL in the query editor
+
+5. Execute query:
+   - Press <F5> to execute entire buffer
+   - Or select text and press <F5> to execute selection
+
+6. View results:
+   - Results appear in the bottom window automatically
+
+7. Save query:
+   - Press `:w` to save
+   - Enter filename when prompted (for new queries)
+
+8. Manage files:
+   - Use explorer to view buffers, saved queries, and tables
+   - Press `dd` to delete files
+   - Use visual mode + `d` to delete multiple files
+
+==============================================================================
+8. DATABASE TYPES                                    *enhance-database-types*
+
+SQL Server                                               *enhance-sqlserver*
+
+>lua
+    {
+      name = "Production DB",
+      type = "sqlserver",  -- or "sql server", "mssql"
+      host = "localhost",
+      database = "MyDatabase",
+      user = "sa",
+      password = "YourPassword",
+    }
+<
+
+Requires: `sqlcmd` CLI tool
+
+SQLite                                                   *enhance-sqlite*
+
+>lua
+    {
+      name = "Local DB",
+      type = "sqlite",
+      path = "~/path/to/database.db",
+    }
+<
+
+Requires: `sqlite3` CLI tool
+
+MySQL                                                    *enhance-mysql*
+
+>lua
+    {
+      name = "MySQL DB",
+      type = "mysql",  -- or "mariadb"
+      host = "localhost",
+      port = 3306,
+      database = "mydb",
+      user = "root",
+      password = "secret",
+    }
+<
+
+Requires: `mysql` CLI tool
+
+PostgreSQL                                               *enhance-postgresql*
+
+>lua
+    {
+      name = "Postgres DB",
+      type = "postgres",  -- or "postgresql"
+      host = "localhost",
+      port = 5432,
+      database = "mydb",
+      user = "postgres",
+      password = "secret",
+    }
+<
+
+Requires: `psql` CLI tool
+
+==============================================================================
+9. EXAMPLES                                              *enhance-examples*
+
+Basic SQLite Workflow                                    *enhance-example-sqlite*
+
+1. Configure connection:
+>lua
+    require("enhance").setup({
+      connections = {
+        { name = "My App DB", type = "sqlite", path = "~/myapp.db" }
+      }
+    })
+<
+
+2. Start workspace:
+>vim
+    :EnhanceStart
+<
+
+3. Expand connection in explorer (press <CR>)
+
+4. Create new query (press <CR> on "New Query")
+
+5. Write query:
+>sql
+    SELECT * FROM users WHERE active = 1;
+<
+
+6. Execute (press <F5>)
+
+7. Save query (press :w, enter filename "active_users")
+
+Multiple Connections                                     *enhance-example-multiple*
+
+>lua
+    require("enhance").setup({
+      connections = {
+        {
+          name = "Production",
+          type = "sqlserver",
+          host = "prod.example.com",
+          database = "AppDB",
+          user = "app_user",
+          password = "secret",
+        },
+        {
+          name = "Development",
+          type = "sqlite",
+          path = "~/dev.db",
+        },
+        {
+          name = "Analytics",
+          type = "postgres",
+          host = "analytics.example.com",
+          database = "warehouse",
+          user = "analyst",
+          password = "secret",
+        }
+      }
+    })
+<
+
+Bulk File Deletion                                       *enhance-example-bulk-delete*
+
+1. Open explorer:
+>vim
+    :EnhanceExplorer
+<
+
+2. Navigate to Buffers or Saved Queries section
+
+3. Enter visual mode (V)
+
+4. Select multiple files (j/k to move)
+
+5. Press `d` to delete all selected files
+
+Execute Visual Selection                                 *enhance-example-visual*
+
+1. Write multiple queries in buffer:
+>sql
+    SELECT * FROM users;
+    SELECT * FROM orders;
+    SELECT * FROM products;
+<
+
+2. Enter visual mode (V)
+
+3. Select one query
+
+4. Press <F5> to execute only selected query
+
+==============================================================================
+10. TROUBLESHOOTING                                  *enhance-troubleshooting*
+
+Health Check                                             *enhance-health*
+
+Run health check to diagnose issues:
+>vim
+    :checkhealth enhance
+<
+
+The health check verifies:
+- Plugin loaded correctly
+- Database CLI tools available (sqlite3, sqlcmd, mysql, psql)
+- Connections configured properly
+- Database files exist (for SQLite)
+- Commands registered
+
+Database CLI Tools Not Found                             *enhance-troubleshooting-cli*
+
+Problem: `:checkhealth enhance` shows CLI tools missing
+
+Solution: Install required tools
+
+macOS:
+>sh
+    brew install sqlite3
+    brew install sqlcmd
+    brew install mysql-client
+    brew install postgresql
+<
+
+Linux (Debian/Ubuntu):
+>sh
+    apt install sqlite3
+    apt install mysql-client
+    apt install postgresql-client
+<
+
+For SQL Server on Linux, install from Microsoft's repository.
+
+Query Execution Fails                                    *enhance-troubleshooting-query*
+
+Problem: Query executes but shows no results or errors
+
+Solution:
+1. Check `:checkhealth enhance` for connection issues
+2. Verify database file exists (for SQLite)
+3. Test connection manually:
+>sh
+    sqlite3 /path/to/db.db "SELECT 1;"
+<
+4. Check query syntax in database-specific tool first
+5. Verify credentials and permissions
+
+Explorer Not Showing Buffers                             *enhance-troubleshooting-buffers*
+
+Problem: Buffers section shows (0) even with open query buffers
+
+Solution: Buffers are only tracked after executing a query. Execute a
+query first, then the buffer will appear in the explorer.
+
+Connection Fails                                         *enhance-troubleshooting-connection*
+
+Problem: Cannot connect to database
+
+Solution:
+1. Verify connection details (host, port, database, user, password)
+2. Check network connectivity
+3. Verify database server is running
+4. Check firewall rules
+5. Test connection with native CLI tool:
+>sh
+    sqlcmd -S localhost -U sa -P password -d MyDatabase
+    mysql -h localhost -u root -p mydb
+    psql -h localhost -U postgres -d mydb
+<
+
+Results Not Displaying                                   *enhance-troubleshooting-results*
+
+Problem: Query executes but results window doesn't appear
+
+Solution:
+1. Toggle results window:
+>vim
+    :EnhanceResults
+<
+2. Check if results window was accidentally closed
+3. Restart workspace:
+>vim
+    :EnhanceStop
+    :EnhanceStart
+<
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
+

@@ -2,17 +2,20 @@
 
 Database UI enhancement for Neovim. A pure Lua database interface with intelligent result formatting and modern UI.
 
+This tool is aimed at providing a great stepping stone into a Neovim based database tool. Hopefully you'll find it 
+provides helpful features. At a minimum you will see that it delivers the familiar keymaps while in the plugins that
+you'd expect while in any other editor inside Neovim. It supports **MySql**,**Postgres**, **Sqlite**, and 
+**SQL Server** out of the box. 
+
+Enjoy!
+
 ## Features
 
-- 🎯 **Pure Lua**: No VimScript dependencies
-- 🗄️ **Multi-database**: SQL Server (primary), SQLite, MySQL, PostgreSQL
-- ⚡ **Fast execution**: Async query execution using jobstart
-- 🎨 **Explorer UI**: Tree-based database browser with drawer layout
-- 📁 **File management**: Tmp buffers, saved queries, and result tracking
-- 🗑️ **Bulk operations**: Delete multiple files with visual selection
-- ⚙️ **Configurable**: Customizable keymaps and UI preferences
-- 🔧 **Health check**: Built-in `:checkhealth enhance` diagnostics
-- ✅ **Production-ready**: Comprehensive test suite with 67 passing tests
+- **Multi-database**: SQL Server, SQLite, MySQL, PostgreSQL
+- **Fast execution**: With less to load like traditional apps!
+- **Explorer UI**: Tree-based database browser with drawer layout
+- **Temp Buffers**: Temp buffers are stored without needing to save.
+- **Configurable**: Customizable keymaps and UI preferences
 
 ## Installation
 
@@ -22,7 +25,7 @@ Database UI enhancement for Neovim. A pure Lua database interface with intellige
 -- In your lua/plugins/enhance.lua or similar
 return {
   {
-    "yourusername/enhance.nvim",  -- or dir = "~/plugins/enhance.nvim" for local
+    "csmhowitzer/enhance.nvim",  -- or dir = "~/plugins/enhance.nvim" for local
     config = function()
       require("enhance").setup({
         enabled = true,
@@ -161,49 +164,6 @@ require("enhance").setup({
 **Results Buffer:**
 - `q` - Close results window
 
-## Health Check
-
-Run `:checkhealth enhance` to verify:
-- Plugin loaded correctly
-- Database CLI tools available (sqlite3, psql, mysql)
-- Connections configured properly
-- Database files exist (for SQLite)
-- Commands registered
-
-## Development
-
-### Running Tests
-
-```bash
-nvim --headless -c "PlenaryBustedDirectory tests" -c "qa!" > test_output.log 2>&1
-cat test_output.log
-```
-
-### Project Structure
-
-```
-enhance.nvim/
-├── lua/enhance/
-│   ├── init.lua         # Main entry point and commands
-│   ├── config.lua       # Configuration validation and merging
-│   ├── connections.lua  # Connection management
-│   ├── explorer.lua     # Tree-based database browser (2574 lines)
-│   ├── query.lua        # Query buffer handling and execution
-│   ├── executor.lua     # Database-specific query execution
-│   ├── results.lua      # Results display and formatting
-│   └── health.lua       # Health check diagnostics
-├── plugin/enhance.lua   # Plugin initialization
-├── tests/               # Comprehensive test suite (67 tests)
-│   ├── config_spec.lua
-│   ├── connections_spec.lua
-│   ├── init_spec.lua
-│   ├── explorer_spec.lua
-│   ├── query_spec.lua
-│   ├── executor_spec.lua
-│   └── results_spec.lua
-└── README.md
-```
-
 ## Examples
 
 ### Basic SQLite Workflow
@@ -276,8 +236,4 @@ SELECT * FROM users WHERE active = 1;
 **Problem**: Buffers section shows (0) even with open query buffers
 
 **Solution**: Buffers are only tracked after executing a query. Execute a query first, then the buffer will appear in the explorer.
-
-## License
-
-MIT
 

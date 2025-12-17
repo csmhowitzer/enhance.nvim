@@ -3,13 +3,76 @@
 
 local M = {}
 
+---Generate status line from metadata
+---@param metadata table Execution metadata
+---@return string[] Status line (2 lines: info, separator)
+local function generate_status_line(metadata)
+  local info = string.format(
+    "Rows: %s | %.2fms | %s | %s | %s",
+    metadata.row_count and tostring(metadata.row_count) or "N/A",
+    metadata.execution_time,
+    metadata.connection_name,
+    metadata.db_type,
+    metadata.timestamp
+  )
+
+  -- Make separator match the length of the info line
+  local separator = string.rep("─", #info)
+
+  return { info, separator }
+end
+
+---Apply highlight to status line in buffer
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+---@param position string Status line position ('top' or 'bottom')
+local function apply_status_line_highlight(bufnr, config, position)
+  -- Create namespace for status line highlights
+  local ns_id = vim.api.nvim_create_namespace('enhance_status_line')
+
+  -- Determine which lines to highlight based on position
+  local start_line, end_line
+  if position == 'top' then
+    start_line = 0  -- First line (0-indexed)
+    end_line = 1    -- Second line (0-indexed, exclusive)
+  else  -- bottom
+    local line_count = vim.api.nvim_buf_line_count(bufnr)
+    start_line = line_count - 2
+    end_line = line_count - 1
+  end
+
+  -- Apply highlight to both status line rows
+  for line = start_line, end_line do
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, config.status_line.highlight, line, 0, -1)
+  end
+end
+
 ---Display query results in a buffer
 ---@param lines string[] Result lines
 ---@param connection table Database connection
 ---@param query_bufnr number? Query buffer number (optional, for associating results)
-function M.display(lines, connection, query_bufnr)
+---@param metadata table? Execution metadata (execution_time, row_count, db_type, timestamp, connection_name)
+function M.display(lines, connection, query_bufnr, metadata)
   local explorer = require("enhance.explorer")
   local timestamp = os.date("%H:%M:%S")
+  local config = require("enhance").get_config()
+
+  -- Generate and insert status line if metadata is provided
+  if metadata and config.status_line.enabled and config.status_line.position ~= 'none' then
+    local status_lines = generate_status_line(metadata)
+
+    if config.status_line.position == 'top' then
+      -- Insert at beginning
+      for i = #status_lines, 1, -1 do
+        table.insert(lines, 1, status_lines[i])
+      end
+    elseif config.status_line.position == 'bottom' then
+      -- Append at end
+      for _, line in ipairs(status_lines) do
+        table.insert(lines, line)
+      end
+    end
+  end
 
   -- Check if query buffer already has an associated result buffer
   local buf
@@ -74,6 +137,11 @@ function M.display(lines, connection, query_bufnr)
 
   -- Set keymaps
   M.setup_keymaps(buf)
+
+  -- Apply status line highlight if metadata is provided
+  if metadata and config.status_line.enabled and config.status_line.position ~= 'none' then
+    apply_status_line_highlight(buf, config, config.status_line.position)
+  end
 
   vim.notify("Query results displayed", vim.log.levels.INFO)
 

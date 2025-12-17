@@ -8,6 +8,7 @@ local M = {}
 ---@field connections table[] List of database connections
 ---@field keymaps table Keymap configuration
 ---@field ui table UI configuration
+---@field status_line table Status line configuration
 
 ---@type EnhanceConfig
 local default_config = {
@@ -21,6 +22,11 @@ local default_config = {
     results_position = "split", -- "split", "vsplit", "tab"
     show_query_time = true,
   },
+  status_line = {
+    enabled = true,
+    position = "top",  -- 'top' | 'bottom' | 'none'
+    highlight = "EnhanceStatusLine",
+  },
 }
 
 ---@type EnhanceConfig
@@ -31,11 +37,18 @@ M.config = {}
 function M.setup(opts)
   -- Merge user config with defaults
   M.config = vim.tbl_deep_extend("force", default_config, opts or {})
-  
+
   if not M.config.enabled then
     return
   end
-  
+
+  -- Set up default highlight group for status line
+  vim.api.nvim_set_hl(0, 'EnhanceStatusLine', {
+    fg = '#89b4fa',  -- Light blue
+    bold = true,
+    default = true  -- Allow user to override
+  })
+
   -- Initialize modules
   require("enhance.connections").setup(M.config.connections)
 

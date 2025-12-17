@@ -16,6 +16,11 @@ local M = {}
 ---@field password string? Password
 ---@field trust_server_certificate boolean? Trust server certificate for SQL Server (default: true)
 
+---@class StatusLineConfig
+---@field enabled boolean Enable status line display (default: true)
+---@field position string Position of status line: 'top' | 'bottom' | 'none' (default: 'top')
+---@field highlight string Highlight group name for status line (default: 'EnhanceStatusLine')
+
 ---Get default configuration
 ---@return table Default configuration
 function M.defaults()
@@ -29,6 +34,11 @@ function M.defaults()
     ui = {
       results_position = "split",
       show_query_time = true,
+    },
+    status_line = {
+      enabled = true,
+      position = "top",  -- 'top' | 'bottom' | 'none'
+      highlight = "EnhanceStatusLine",
     },
   }
 end

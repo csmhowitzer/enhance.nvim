@@ -2118,14 +2118,14 @@ local function handle_enter(line_num)
 
   elseif info.type == "table_columns" or info.type == "table_list" or
          info.type == "table_pks" or info.type == "table_fks" or info.type == "table_indexes" then
-    -- Generate and execute query in new buffer tab (metadata queries)
+    -- Generate metadata query in new buffer (no auto-execution)
     local conn = connections.get_connection(info.conn_name)
     if conn then
       local query = generate_metadata_query(conn, info.table_name, info.type)
       if query then
-        -- Create new buffer with query
+        -- Create new buffer with query (user must manually execute with <F5>)
         local context = string.format("%s-%s", info.table_name, info.type:lower())
-        create_and_execute_query(conn, query, context)
+        create_script_buffer(conn, query, context)
       end
     end
 

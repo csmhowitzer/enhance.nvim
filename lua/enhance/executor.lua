@@ -3,6 +3,55 @@
 
 local M = {}
 
+---Count rows from query output
+---Handles both SELECT queries (counts data rows) and DML queries (parses "rows affected")
+---@param output_lines string[] Query output lines
+---@param db_type string Database type
+---@return number Row count or rows affected
+local function count_rows(output_lines, db_type)
+  local normalized_type = db_type:lower():gsub("[%s%-_]", "")
+
+  -- Try to parse "rows affected" message first (INSERT/UPDATE/DELETE)
+  if normalized_type == "sqlserver" or normalized_type == "mssql" then
+    for _, line in ipairs(output_lines) do
+      local count = line:match("%((%d+) rows? affected%)")
+      if count then
+        return tonumber(count)
+      end
+    end
+  elseif normalized_type == "mysql" or normalized_type == "mariadb" then
+    for _, line in ipairs(output_lines) do
+      local count = line:match("(%d+) rows? affected")
+      if count then
+        return tonumber(count)
+      end
+    end
+  elseif normalized_type == "postgres" or normalized_type == "postgresql" then
+    for _, line in ipairs(output_lines) do
+      -- INSERT 0 5, UPDATE 5, DELETE 5
+      local count = line:match("^%w+%s+%d*%s*(%d+)")
+      if count then
+        return tonumber(count)
+      end
+    end
+  end
+
+  -- No "rows affected" found, count data rows (SELECT query)
+  -- Skip first 2 lines (headers), skip empty lines, skip footer messages
+  local row_count = 0
+  for i = 3, #output_lines do
+    local line = output_lines[i]
+    if line:match("%S") and
+       not line:match("%(.*rows affected%)") and
+       not line:match("rows in set") and
+       not line:match("^%(.*rows%)") then
+      row_count = row_count + 1
+    end
+  end
+
+  return row_count
+end
+
 ---Test database connection
 ---@param connection table Database connection
 ---@return boolean success True if connection successful
@@ -195,13 +244,20 @@ function M.execute_sqlite(connection, query, query_bufnr)
       local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
 
       if exit_code == 0 then
-        -- Add query metadata
-        table.insert(output_lines, "")
-        table.insert(output_lines, string.format("Query completed in %.2fms", duration))
-        table.insert(output_lines, string.format("Database: %s", connection.name))
+        -- Count rows using unified logic
+        local row_count = count_rows(output_lines, connection.type)
 
-        -- Display results
-        require("enhance.results").display(output_lines, connection, query_bufnr)
+        -- Build metadata
+        local metadata = {
+          execution_time = duration,
+          row_count = row_count,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+        }
+
+        -- Display results with metadata (no footer added here)
+        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -285,10 +341,20 @@ function M.execute_sqlserver(connection, query, query_bufnr)
       local duration = (end_time - start_time) / 1000000
 
       if exit_code == 0 then
-        table.insert(output_lines, "")
-        table.insert(output_lines, string.format("Query completed in %.2fms", duration))
-        table.insert(output_lines, string.format("Database: %s", connection.name))
-        require("enhance.results").display(output_lines, connection, query_bufnr)
+        -- Count rows using unified logic
+        local row_count = count_rows(output_lines, connection.type)
+
+        -- Build metadata
+        local metadata = {
+          execution_time = duration,
+          row_count = row_count,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+        }
+
+        -- Display results with metadata (no footer added here)
+        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -359,10 +425,20 @@ function M.execute_mysql(connection, query, query_bufnr)
       local duration = (end_time - start_time) / 1000000
 
       if exit_code == 0 then
-        table.insert(output_lines, "")
-        table.insert(output_lines, string.format("Query completed in %.2fms", duration))
-        table.insert(output_lines, string.format("Database: %s", connection.name))
-        require("enhance.results").display(output_lines, connection, query_bufnr)
+        -- Count rows using unified logic
+        local row_count = count_rows(output_lines, connection.type)
+
+        -- Build metadata
+        local metadata = {
+          execution_time = duration,
+          row_count = row_count,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+        }
+
+        -- Display results with metadata (no footer added here)
+        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -430,10 +506,20 @@ function M.execute_postgres(connection, query, query_bufnr)
       local duration = (end_time - start_time) / 1000000
 
       if exit_code == 0 then
-        table.insert(output_lines, "")
-        table.insert(output_lines, string.format("Query completed in %.2fms", duration))
-        table.insert(output_lines, string.format("Database: %s", connection.name))
-        require("enhance.results").display(output_lines, connection, query_bufnr)
+        -- Count rows using unified logic
+        local row_count = count_rows(output_lines, connection.type)
+
+        -- Build metadata
+        local metadata = {
+          execution_time = duration,
+          row_count = row_count,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+        }
+
+        -- Display results with metadata (no footer added here)
+        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end

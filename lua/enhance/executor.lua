@@ -3,48 +3,66 @@
 
 local M = {}
 
----Count rows from query output
+---Count rows from query output and remove footer lines
 ---Handles both SELECT queries (counts data rows) and DML queries (parses "rows affected")
----@param output_lines string[] Query output lines
+---Modifies output_lines in place to remove database footer messages
+---@param output_lines string[] Query output lines (modified in place)
 ---@param db_type string Database type
 ---@return number Row count or rows affected
 local function count_rows(output_lines, db_type)
   local normalized_type = db_type:lower():gsub("[%s%-_]", "")
+  local row_count = 0
 
   -- Try to parse "rows affected" message first (INSERT/UPDATE/DELETE)
   if normalized_type == "sqlserver" or normalized_type == "mssql" then
-    for _, line in ipairs(output_lines) do
+    for i = #output_lines, 1, -1 do
+      local line = output_lines[i]
       local count = line:match("%((%d+) rows? affected%)")
       if count then
-        return tonumber(count)
+        row_count = tonumber(count)
+        table.remove(output_lines, i)  -- Remove the footer line
       end
+    end
+    if row_count > 0 then
+      return row_count
     end
   elseif normalized_type == "mysql" or normalized_type == "mariadb" then
-    for _, line in ipairs(output_lines) do
+    for i = #output_lines, 1, -1 do
+      local line = output_lines[i]
       local count = line:match("(%d+) rows? affected")
       if count then
-        return tonumber(count)
+        row_count = tonumber(count)
+        table.remove(output_lines, i)  -- Remove the footer line
       end
     end
+    if row_count > 0 then
+      return row_count
+    end
   elseif normalized_type == "postgres" or normalized_type == "postgresql" then
-    for _, line in ipairs(output_lines) do
+    for i = #output_lines, 1, -1 do
+      local line = output_lines[i]
       -- INSERT 0 5, UPDATE 5, DELETE 5
       local count = line:match("^%w+%s+%d*%s*(%d+)")
       if count then
-        return tonumber(count)
+        row_count = tonumber(count)
+        table.remove(output_lines, i)  -- Remove the footer line
       end
+    end
+    if row_count > 0 then
+      return row_count
     end
   end
 
   -- No "rows affected" found, count data rows (SELECT query)
-  -- Skip first 2 lines (headers), skip empty lines, skip footer messages
-  local row_count = 0
-  for i = 3, #output_lines do
+  -- Skip first 2 lines (headers), count data rows, remove footer messages
+  row_count = 0
+  for i = #output_lines, 3, -1 do  -- Iterate backwards to safely remove
     local line = output_lines[i]
-    if line:match("%S") and
-       not line:match("%(.*rows affected%)") and
-       not line:match("rows in set") and
-       not line:match("^%(.*rows%)") then
+    if line:match("%(.*rows affected%)") or
+       line:match("rows in set") or
+       line:match("^%(.*rows%)") then
+      table.remove(output_lines, i)  -- Remove footer line
+    elseif line:match("%S") then
       row_count = row_count + 1
     end
   end

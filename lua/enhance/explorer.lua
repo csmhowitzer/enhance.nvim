@@ -1291,8 +1291,14 @@ local function generate_metadata_query(connection, table_name, query_type)
   local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
   if query_type == "table_list" then
-    -- Simple SELECT with LIMIT
-    return string.format("SELECT * FROM %s LIMIT 200;", table_name)
+    -- Simple SELECT with database-specific row limiting
+    if db_type == "sqlserver" or db_type == "mssql" then
+      -- SQL Server uses TOP
+      return string.format("SELECT TOP 200 * FROM %s;", table_name)
+    else
+      -- SQLite, MySQL, PostgreSQL use LIMIT
+      return string.format("SELECT * FROM %s LIMIT 200;", table_name)
+    end
 
   elseif query_type == "table_columns" then
     -- Column information query

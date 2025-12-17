@@ -25,12 +25,82 @@ local default_config = {
   status_line = {
     enabled = true,
     position = "top",  -- 'top' | 'bottom' | 'none'
-    highlight = "EnhanceStatusLine",
+    highlights = {
+      label = "EnhanceStatusLabel",
+      value = "EnhanceStatusValue",
+      connection = "EnhanceStatusConnection",
+      db_type = "EnhanceStatusDBType",
+      timestamp = "EnhanceStatusTimestamp",
+      separator = "EnhanceStatusSeparator",
+      line_number = "EnhanceLineNumber",
+      line_number_accent = "EnhanceLineNumberAccent",
+    },
   },
 }
 
 ---@type EnhanceConfig
 M.config = {}
+
+---Setup highlight groups for status line
+---Can be called multiple times to refresh highlights (e.g., after colorscheme change)
+function M.setup_highlights()
+  -- Set up default highlight groups for status line
+  -- Colors from scratch-manager.nvim and augment.nvim for consistency
+  vim.api.nvim_set_hl(0, 'EnhanceStatusLabel', {
+    fg = '#89b4fa',  -- Light blue (scratch-manager border/separator)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceStatusValue', {
+    fg = '#a6d189',  -- Green (scratch-manager header)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceStatusConnection', {
+    fg = '#74c7ec',  -- Cyan/Teal (scratch-manager title/footer)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceStatusDBType', {
+    fg = '#cba6f7',  -- Purple (augment chat border)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceStatusTimestamp', {
+    fg = '#f9e2af',  -- Yellow (different from DB type)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceStatusSeparator', {
+    fg = '#6c7086',  -- Gray (subtle separator)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceLineNumber', {
+    fg = '#6c7086',  -- Gray (subtle, not distracting)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceLineNumberAccent', {
+    fg = '#cba6f7',  -- Purple (augment purple for every 5th line)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceCursorLine', {
+    bg = '#313244',  -- Gray background (matches catppuccin mocha default)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceCursorLineAccent', {
+    bg = '#3f3144',  -- Purple-tinted background for every 5th line
+    default = true
+  })
+end
 
 ---Setup enhance.nvim with user configuration
 ---@param opts EnhanceConfig? User configuration options
@@ -42,11 +112,15 @@ function M.setup(opts)
     return
   end
 
-  -- Set up default highlight group for status line
-  vim.api.nvim_set_hl(0, 'EnhanceStatusLine', {
-    fg = '#89b4fa',  -- Light blue
-    bold = true,
-    default = true  -- Allow user to override
+  -- Setup highlights
+  M.setup_highlights()
+
+  -- Re-apply highlights on colorscheme change (following scratch-manager pattern)
+  vim.api.nvim_create_autocmd("ColorScheme", {
+    group = vim.api.nvim_create_augroup("EnhanceHighlights", { clear = true }),
+    callback = function()
+      M.setup_highlights()
+    end,
   })
 
   -- Initialize modules

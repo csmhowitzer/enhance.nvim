@@ -16,10 +16,20 @@ local M = {}
 ---@field password string? Password
 ---@field trust_server_certificate boolean? Trust server certificate for SQL Server (default: true)
 
+---@class StatusLineHighlights
+---@field label string Highlight group for labels (default: 'EnhanceStatusLabel')
+---@field value string Highlight group for values (default: 'EnhanceStatusValue')
+---@field connection string Highlight group for connection name (default: 'EnhanceStatusConnection')
+---@field db_type string Highlight group for database type (default: 'EnhanceStatusDBType')
+---@field timestamp string Highlight group for timestamp (default: 'EnhanceStatusTimestamp')
+---@field separator string Highlight group for separator line (default: 'EnhanceStatusSeparator')
+---@field line_number string Highlight group for line numbers (default: 'EnhanceLineNumber')
+---@field line_number_accent string Highlight group for every 5th line number (default: 'EnhanceLineNumberAccent')
+
 ---@class StatusLineConfig
 ---@field enabled boolean Enable status line display (default: true)
 ---@field position string Position of status line: 'top' | 'bottom' | 'none' (default: 'top')
----@field highlight string Highlight group name for status line (default: 'EnhanceStatusLine')
+---@field highlights StatusLineHighlights Highlight groups for different parts of status line
 
 ---Get default configuration
 ---@return table Default configuration
@@ -38,7 +48,16 @@ function M.defaults()
     status_line = {
       enabled = true,
       position = "top",  -- 'top' | 'bottom' | 'none'
-      highlight = "EnhanceStatusLine",
+      highlights = {
+        label = "EnhanceStatusLabel",
+        value = "EnhanceStatusValue",
+        connection = "EnhanceStatusConnection",
+        db_type = "EnhanceStatusDBType",
+        timestamp = "EnhanceStatusTimestamp",
+        separator = "EnhanceStatusSeparator",
+        line_number = "EnhanceLineNumber",
+        line_number_accent = "EnhanceLineNumberAccent",
+      },
     },
   }
 end

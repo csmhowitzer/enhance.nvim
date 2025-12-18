@@ -98,10 +98,10 @@ function M.setup_keymaps(bufnr)
     M.execute_current_query(bufnr)
   end, { buffer = bufnr, desc = "Execute SQL query" })
 
-  -- Visual mode execution
-  vim.keymap.set('v', config.keymaps.execute_query, function()
-    M.execute_visual_selection(bufnr)
-  end, { buffer = bufnr, desc = "Execute selected SQL" })
+  -- Visual mode execution - use command mode to properly exit visual mode first
+  vim.keymap.set('v', config.keymaps.execute_query,
+    string.format(':<C-u>lua require("enhance.query").execute_visual_selection(%d)<CR>', bufnr),
+    { buffer = bufnr, desc = "Execute selected SQL" })
 
   -- Delete current file keymap
   vim.keymap.set('n', '<leader>dd', function()
@@ -169,10 +169,37 @@ function M.execute_visual_selection(bufnr)
     return
   end
 
-  -- Get visual selection
+  -- Get visual selection with proper character-level selection
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
-  local lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
+  local start_line = start_pos[2]
+  local start_col = start_pos[3]
+  local end_line = end_pos[2]
+  local end_col = end_pos[3]
+
+  -- Get the selected lines
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+
+  -- Safety check
+  if not lines or #lines == 0 then
+    vim.notify("No text selected", vim.log.levels.WARN)
+    return
+  end
+
+  -- Handle single line selection
+  if #lines == 1 then
+    if lines[1] then
+      lines[1] = string.sub(lines[1], start_col, end_col)
+    end
+  elseif #lines > 1 then
+    -- Multi-line selection: trim first and last lines
+    if lines[1] then
+      lines[1] = string.sub(lines[1], start_col)
+    end
+    if lines[#lines] then
+      lines[#lines] = string.sub(lines[#lines], 1, end_col)
+    end
+  end
 
   local query = table.concat(lines, "\n")
   query = vim.trim(query)

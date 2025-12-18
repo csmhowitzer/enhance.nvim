@@ -1,0 +1,19 @@
+[
+  {
+    "name": "Local SQLite",
+    "url": "sqlite:/Users/yourusername/example.db"
+  },
+  {
+    "name": "Production SQL Server",
+    "url": "sqlserver://prod-server.example.com/ProductionDB;user=admin;password=your-password-here;TrustServerCertificate=yes;"
+  },
+  {
+    "name": "Dev MySQL",
+    "url": "mysql://dev_user:dev_password@localhost:3306/dev_db"
+  },
+  {
+    "name": "Staging PostgreSQL",
+    "url": "postgresql://staging_user:staging_password@staging-db.example.com:5432/staging_db"
+  }
+]
+

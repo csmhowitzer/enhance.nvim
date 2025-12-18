@@ -341,12 +341,13 @@ end
 
 ---Fetch table names from database
 ---@param connection table Database connection
+---@param force_refresh boolean? Force refresh (skip cache)
 ---@return string[] tables List of table names
-local function fetch_tables(connection)
+local function fetch_tables(connection, force_refresh)
   local cache_key = "tables:" .. connection.name
 
-  -- Return cached if available
-  if table_cache[cache_key] then
+  -- Return cached if available (unless force_refresh is true)
+  if not force_refresh and table_cache[cache_key] then
     return table_cache[cache_key]
   end
 
@@ -2207,6 +2208,10 @@ function M.start()
       M.toggle()
     end, { buffer = explorer_buf, desc = "Toggle explorer" })
 
+    vim.keymap.set('n', 'R', function()
+      M.refresh()
+    end, { buffer = explorer_buf, desc = "Refresh explorer" })
+
     -- Single line deletion with dd
     vim.keymap.set('n', 'dd', function()
       local line_num = vim.fn.line('.')
@@ -2377,6 +2382,22 @@ end
 ---@return boolean
 function M.is_initialized()
   return workspace_initialized
+end
+
+---Refresh the explorer (clear cache and redraw)
+function M.refresh()
+  if not M.is_open() then
+    vim.notify("Explorer is not open", vim.log.levels.WARN)
+    return
+  end
+
+  -- Clear table cache to force refresh
+  table_cache = {}
+
+  -- Redraw the explorer
+  refresh_explorer()
+
+  vim.notify("Explorer refreshed", vim.log.levels.INFO)
 end
 
 ---Get the results window ID (for results module to reuse)

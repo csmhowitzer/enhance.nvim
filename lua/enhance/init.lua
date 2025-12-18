@@ -5,7 +5,7 @@ local M = {}
 
 ---@class EnhanceConfig
 ---@field enabled boolean Enable the plugin
----@field connections table[] List of database connections
+---@field connections_file string Path to connections JSON file (vim-dadbod-ui format)
 ---@field keymaps table Keymap configuration
 ---@field ui table UI configuration
 ---@field status_line table Status line configuration
@@ -13,7 +13,7 @@ local M = {}
 ---@type EnhanceConfig
 local default_config = {
   enabled = true,
-  connections = {},
+  connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
   keymaps = {
     execute_query = "<F5>",
     save_query = ":w",
@@ -123,8 +123,8 @@ function M.setup(opts)
     end,
   })
 
-  -- Initialize modules
-  require("enhance.connections").setup(M.config.connections)
+  -- Initialize modules - load connections from file
+  require("enhance.connections").setup(M.config.connections_file)
 
   -- Create user commands
   vim.api.nvim_create_user_command("EnhanceToggle", function()
@@ -142,6 +142,10 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("EnhanceResults", function()
     require("enhance.explorer").toggle_results()
   end, { desc = "Toggle results window" })
+
+  vim.api.nvim_create_user_command("EnhanceRefresh", function()
+    require("enhance.explorer").refresh()
+  end, { desc = "Refresh explorer (clear cache and redraw)" })
 
   vim.api.nvim_create_user_command("EnhanceQuery", function()
     require("enhance.explorer").new_query()

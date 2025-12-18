@@ -218,17 +218,30 @@ end
 function M.execute_sqlite(connection, query, query_bufnr)
   local output_lines = {}
   local start_time = vim.loop.hrtime()
-  
+  local affected_rows = nil
+
   -- Expand path
   local db_path = vim.fn.expand(connection.path)
-  
+
   -- Check if database exists
   if vim.fn.filereadable(db_path) ~= 1 then
     vim.notify("Database file not found: " .. db_path, vim.log.levels.ERROR)
     return
   end
-  
+
   vim.notify("Executing query...", vim.log.levels.INFO)
+
+  -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
+  local query_upper = query:upper():gsub("^%s+", "")
+  local is_dml = query_upper:match("^INSERT%s") or
+                 query_upper:match("^UPDATE%s") or
+                 query_upper:match("^DELETE%s")
+
+  -- For DML statements, append SELECT changes() to get affected row count
+  local exec_query = query
+  if is_dml then
+    exec_query = query .. "; SELECT changes();"
+  end
 
   -- Pass query as command-line argument
   vim.fn.jobstart({
@@ -236,7 +249,7 @@ function M.execute_sqlite(connection, query, query_bufnr)
     db_path,
     '-column',    -- Columnar output
     '-header',    -- Show column headers
-    query,        -- Query as argument
+    exec_query,   -- Query as argument (possibly with changes() appended)
   }, {
     stdout_buffered = true,
     on_stdout = function(_, data)
@@ -262,8 +275,27 @@ function M.execute_sqlite(connection, query, query_bufnr)
       local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
 
       if exit_code == 0 then
-        -- Count rows using unified logic
-        local row_count = count_rows(output_lines, connection.type)
+        local row_count = 0
+
+        -- For DML statements, extract the changes() result from the last line
+        if is_dml and #output_lines > 0 then
+          -- The last line should be the changes() result
+          local last_line = output_lines[#output_lines]
+          local changes = tonumber(last_line)
+          if changes then
+            row_count = changes
+            -- Remove the changes() output lines (header + separator + value)
+            -- Typically: "changes()", "----------", "200"
+            if #output_lines >= 3 then
+              table.remove(output_lines) -- Remove value
+              table.remove(output_lines) -- Remove separator
+              table.remove(output_lines) -- Remove header
+            end
+          end
+        else
+          -- For SELECT queries, count rows using unified logic
+          row_count = count_rows(output_lines, connection.type)
+        end
 
         -- Build metadata
         local metadata = {
@@ -276,6 +308,20 @@ function M.execute_sqlite(connection, query, query_bufnr)
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+
+        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
+        local query_upper = query:upper():gsub("^%s+", "")
+        if query_upper:match("^CREATE%s+TABLE") or
+           query_upper:match("^DROP%s+TABLE") or
+           query_upper:match("^ALTER%s+TABLE") then
+          -- Refresh explorer to show updated table list
+          vim.schedule(function()
+            local explorer = require("enhance.explorer")
+            if explorer.is_open() then
+              explorer.refresh()
+            end
+          end)
+        end
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -373,6 +419,20 @@ function M.execute_sqlserver(connection, query, query_bufnr)
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+
+        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
+        local query_upper = query:upper():gsub("^%s+", "")
+        if query_upper:match("^CREATE%s+TABLE") or
+           query_upper:match("^DROP%s+TABLE") or
+           query_upper:match("^ALTER%s+TABLE") then
+          -- Refresh explorer to show updated table list
+          vim.schedule(function()
+            local explorer = require("enhance.explorer")
+            if explorer.is_open() then
+              explorer.refresh()
+            end
+          end)
+        end
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -457,6 +517,20 @@ function M.execute_mysql(connection, query, query_bufnr)
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+
+        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
+        local query_upper = query:upper():gsub("^%s+", "")
+        if query_upper:match("^CREATE%s+TABLE") or
+           query_upper:match("^DROP%s+TABLE") or
+           query_upper:match("^ALTER%s+TABLE") then
+          -- Refresh explorer to show updated table list
+          vim.schedule(function()
+            local explorer = require("enhance.explorer")
+            if explorer.is_open() then
+              explorer.refresh()
+            end
+          end)
+        end
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end
@@ -538,6 +612,20 @@ function M.execute_postgres(connection, query, query_bufnr)
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+
+        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
+        local query_upper = query:upper():gsub("^%s+", "")
+        if query_upper:match("^CREATE%s+TABLE") or
+           query_upper:match("^DROP%s+TABLE") or
+           query_upper:match("^ALTER%s+TABLE") then
+          -- Refresh explorer to show updated table list
+          vim.schedule(function()
+            local explorer = require("enhance.explorer")
+            if explorer.is_open() then
+              explorer.refresh()
+            end
+          end)
+        end
       else
         vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
       end

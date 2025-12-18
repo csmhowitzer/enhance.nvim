@@ -9,20 +9,25 @@ local connections = {}
 ---@type table?
 local current_connection = nil
 
----Setup connections from configuration
----@param conn_list table[] List of connections
-function M.setup(conn_list)
-  connections = conn_list or {}
-  
-  -- Add default SQLite connection for testing if no connections provided
+---Setup connections from JSON file
+---@param connections_file string Path to connections JSON file
+function M.setup(connections_file)
+  -- Load connections from file
+  local config = require("enhance.config")
+  local loaded_connections, err = config.load_connections(connections_file)
+
+  if err then
+    vim.notify("Failed to load connections: " .. err, vim.log.levels.ERROR)
+    connections = {}
+    return
+  end
+
+  connections = loaded_connections
+
   if #connections == 0 then
-    connections = {
-      {
-        name = "Test SQLite",
-        type = "sqlite",
-        path = vim.fn.expand("~/.local/share/nvim/enhance/test.db"),
-      }
-    }
+    vim.notify("No connections found in " .. connections_file, vim.log.levels.WARN)
+  else
+    vim.notify(string.format("Loaded %d connection(s) from %s", #connections, connections_file), vim.log.levels.INFO)
   end
 end
 

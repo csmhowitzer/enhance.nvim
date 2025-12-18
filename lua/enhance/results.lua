@@ -145,6 +145,36 @@ function M.display(lines, connection, query_bufnr, metadata)
   local timestamp = os.date("%H:%M:%S")
   local config = require("enhance").get_config()
 
+  -- Count non-empty lines (excluding potential headers)
+  local data_line_count = 0
+  for _, line in ipairs(lines) do
+    if line:match("%S") then
+      data_line_count = data_line_count + 1
+    end
+  end
+
+  -- Check if this is a DML/DDL statement with no result rows
+  local is_non_select_statement = false
+  if metadata then
+    -- DML statement (INSERT/UPDATE/DELETE) with row count
+    if metadata.row_count and metadata.row_count > 0 and data_line_count == 0 then
+      is_non_select_statement = true
+      -- Add success message
+      table.insert(lines, "")
+      table.insert(lines, string.format("✓ Query executed successfully"))
+      table.insert(lines, "")
+      table.insert(lines, string.format("  %s rows affected", format_number(metadata.row_count)))
+      table.insert(lines, "")
+    -- DDL statement (CREATE/DROP/ALTER) with no data and row_count = 0
+    elseif metadata.row_count == 0 and data_line_count == 0 then
+      is_non_select_statement = true
+      -- Add success message for DDL
+      table.insert(lines, "")
+      table.insert(lines, string.format("✓ Query executed successfully"))
+      table.insert(lines, "")
+    end
+  end
+
   -- Generate and insert status line if metadata is provided
   local status_highlights = nil
   if metadata and config.status_line.enabled and config.status_line.position ~= 'none' then

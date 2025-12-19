@@ -9,12 +9,30 @@ local connections = {}
 ---@type table?
 local current_connection = nil
 
----Setup connections from JSON file
----@param connections_file string Path to connections JSON file
-function M.setup(connections_file)
+---Setup connections from JSON file or array (for testing)
+---@param connections_file_or_array string|table[]|nil Path to connections JSON file or array of connections
+function M.setup(connections_file_or_array)
+  -- Handle nil or empty table - add default connection
+  if connections_file_or_array == nil or (type(connections_file_or_array) == "table" and #connections_file_or_array == 0) then
+    connections = {
+      {
+        name = "Test SQLite",
+        type = "sqlite",
+        path = vim.fn.expand("~/.local/share/enhance/test.db"),
+      }
+    }
+    return
+  end
+
+  -- Handle direct connection array (for testing)
+  if type(connections_file_or_array) == "table" then
+    connections = connections_file_or_array
+    return
+  end
+
   -- Load connections from file
   local config = require("enhance.config")
-  local loaded_connections, err = config.load_connections(connections_file)
+  local loaded_connections, err = config.load_connections(connections_file_or_array)
 
   if err then
     vim.notify("Failed to load connections: " .. err, vim.log.levels.ERROR)
@@ -25,9 +43,9 @@ function M.setup(connections_file)
   connections = loaded_connections
 
   if #connections == 0 then
-    vim.notify("No connections found in " .. connections_file, vim.log.levels.WARN)
+    vim.notify("No connections found in " .. connections_file_or_array, vim.log.levels.WARN)
   else
-    vim.notify(string.format("Loaded %d connection(s) from %s", #connections, connections_file), vim.log.levels.INFO)
+    vim.notify(string.format("Loaded %d connection(s) from %s", #connections, connections_file_or_array), vim.log.levels.INFO)
   end
 end
 

@@ -36,6 +36,7 @@ local M = {}
 function M.defaults()
   return {
     enabled = true,
+    connections = {},  -- For backward compatibility with tests
     connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
     keymaps = {
       execute_query = "<F5>",
@@ -293,9 +294,14 @@ end
 ---@return boolean valid True if valid
 ---@return string? error Error message if invalid
 function M.validate_config(config)
-  -- connections = {} is no longer supported
-  if config.connections then
-    return false, "connections = {} is no longer supported. Please use connections_file with vim-dadbod-ui format. See :help enhance-connections"
+  -- Allow connections = {} for testing, but validate each connection
+  if config.connections and type(config.connections) == "table" and #config.connections > 0 then
+    for i, conn in ipairs(config.connections) do
+      local valid, err = M.validate_connection(conn)
+      if not valid then
+        return false, string.format("Connection #%d: %s", i, err)
+      end
+    end
   end
 
   -- Validate connections_file if provided

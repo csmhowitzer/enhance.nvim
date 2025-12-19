@@ -306,8 +306,14 @@ function M.execute_sqlite(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
+        -- Parse and format results for consistent display
+        local parser = require("enhance.parser")
+        local formatter = require("enhance.formatter")
+        local parsed = parser.parse(output_lines, connection.type)
+        local formatted_lines = formatter.format(parsed)
+
         -- Display results with metadata (no footer added here)
-        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
 
         -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
         local query_upper = query:upper():gsub("^%s+", "")
@@ -417,8 +423,14 @@ function M.execute_sqlserver(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
+        -- Parse and format results for consistent display
+        local parser = require("enhance.parser")
+        local formatter = require("enhance.formatter")
+        local parsed = parser.parse(output_lines, connection.type)
+        local formatted_lines = formatter.format(parsed)
+
         -- Display results with metadata (no footer added here)
-        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
 
         -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
         local query_upper = query:upper():gsub("^%s+", "")
@@ -515,8 +527,14 @@ function M.execute_mysql(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
+        -- Parse and format results for consistent display
+        local parser = require("enhance.parser")
+        local formatter = require("enhance.formatter")
+        local parsed = parser.parse(output_lines, connection.type)
+        local formatted_lines = formatter.format(parsed)
+
         -- Display results with metadata (no footer added here)
-        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
 
         -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
         local query_upper = query:upper():gsub("^%s+", "")
@@ -610,8 +628,14 @@ function M.execute_postgres(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
+        -- Parse and format results for consistent display
+        local parser = require("enhance.parser")
+        local formatter = require("enhance.formatter")
+        local parsed = parser.parse(output_lines, connection.type)
+        local formatted_lines = formatter.format(parsed)
+
         -- Display results with metadata (no footer added here)
-        require("enhance.results").display(output_lines, connection, query_bufnr, metadata)
+        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
 
         -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
         local query_upper = query:upper():gsub("^%s+", "")

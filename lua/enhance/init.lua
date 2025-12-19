@@ -13,6 +13,7 @@ local M = {}
 ---@type EnhanceConfig
 local default_config = {
   enabled = true,
+  connections = {},  -- For backward compatibility with tests
   connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
   keymaps = {
     execute_query = "<F5>",

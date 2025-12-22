@@ -491,7 +491,7 @@ local function get_db_icon(db_type)
     elseif normalized == "mysql" or normalized == "mariadb" then
       return "" -- nf-dev-mysql
     elseif normalized == "postgres" or normalized == "postgresql" then
-      return "󰆼" -- nf-md-database (same as SQLite)
+      return "" -- nf-dev-postgresql
     else
       return "󰆼" -- default database icon
     end
@@ -504,7 +504,7 @@ local function get_db_icon(db_type)
     elseif db_type:lower():match("mysql") then
       return "🐬" -- MySQL (dolphin)
     elseif db_type:lower():match("postgres") then
-      return "🗄️" -- PostgreSQL (same as SQLite)
+      return "🐘" -- PostgreSQL (elephant)
     else
       return "🗄️"
     end
@@ -1266,17 +1266,17 @@ local function parse_line(line, line_num)
   local has_db_icon = line:match("[󰆼󰘐🗄️🔷🐬🐘]")
 
   if has_db_icon and indent_level <= 4 then
-    -- Extract connection name - get the last "word" from the line
-    -- Line format: "✗ ▸ 󰆼 example.db" -> we want "example.db"
-    local parts = {}
-    for part in line:gmatch("%S+") do
-      table.insert(parts, part)
-    end
+    -- Extract connection name - get everything after the database icon
+    -- Line format: "✗ ▸ 󰆼 example.db" or "✗ ▸ 󰆼 SQLite Test"
+    -- Find the icon position and extract everything after it
+    local icon_pos = line:find("[󰆼󰘐🗄️🔷🐬🐘]")
+    if icon_pos then
+      -- Get everything after the icon and trim whitespace
+      local conn_name = line:sub(icon_pos + vim.fn.strchars(line:match("[󰆼󰘐🗄️🔷🐬🐘]"))):match("^%s*(.-)%s*$")
 
-    local conn_name = parts[#parts] -- Last non-whitespace part
-
-    if conn_name then
-      return { type = "connection", conn_name = conn_name }
+      if conn_name and conn_name ~= "" then
+        return { type = "connection", conn_name = conn_name }
+      end
     end
   end
 

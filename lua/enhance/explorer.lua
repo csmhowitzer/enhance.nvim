@@ -491,7 +491,7 @@ local function get_db_icon(db_type)
     elseif normalized == "mysql" or normalized == "mariadb" then
       return "" -- nf-dev-mysql
     elseif normalized == "postgres" or normalized == "postgresql" then
-      return "" -- nf-dev-postgresql
+      return "󰆼" -- nf-md-database (same as SQLite)
     else
       return "󰆼" -- default database icon
     end
@@ -504,7 +504,7 @@ local function get_db_icon(db_type)
     elseif db_type:lower():match("mysql") then
       return "🐬" -- MySQL (dolphin)
     elseif db_type:lower():match("postgres") then
-      return "🐘" -- PostgreSQL (elephant)
+      return "🗄️" -- PostgreSQL (same as SQLite)
     else
       return "🗄️"
     end

@@ -1265,11 +1265,6 @@ local function parse_line(line, line_num)
   -- Database icons: 󰆼 (sqlite), 󰘐 (sqlserver),  (mysql),  (postgres), 🗄️🔷🐬🐘 (unicode)
   local has_db_icon = line:match("[󰆼󰘐🗄️🔷🐬🐘]")
 
-  -- DEBUG: Log icon detection
-  if has_db_icon then
-    vim.notify("DEBUG parse_line: Found DB icon in line: [" .. line .. "]", vim.log.levels.WARN)
-  end
-
   if has_db_icon and indent_level <= 4 then
     -- Extract connection name - get everything after the database icon
     -- Line format: "✗ ▸ 󰆼 example.db" or "✗ ▸ 󰆼 SQLite Test"
@@ -1289,11 +1284,8 @@ local function parse_line(line, line_num)
       -- Remove any leading arrows or special characters
       conn_name = conn_name:gsub("^[▸▾✗✓%s]+", "")
       if conn_name and conn_name ~= "" then
-        vim.notify("DEBUG parse_line: Extracted connection name: [" .. conn_name .. "]", vim.log.levels.WARN)
         return { type = "connection", conn_name = conn_name }
       end
-    else
-      vim.notify("DEBUG parse_line: Failed to extract connection name from line: [" .. line .. "]", vim.log.levels.ERROR)
     end
   end
 
@@ -1925,22 +1917,19 @@ local function handle_enter(line_num)
 
   local info = parse_line(line, line_num)
   if not info then
+    vim.notify("DEBUG handle_enter: parse_line returned nil for line: [" .. line .. "]", vim.log.levels.ERROR)
     return
   end
+
+  vim.notify("DEBUG handle_enter: Parsed type=" .. info.type .. " for line: [" .. line .. "]", vim.log.levels.WARN)
 
   local connections = require("enhance.connections")
 
   if info.type == "connection" then
-    -- DEBUG: Log what we extracted
-    vim.notify("DEBUG: Attempting to connect to: [" .. info.conn_name .. "]", vim.log.levels.WARN)
-
     local conn = connections.get_connection(info.conn_name)
     if not conn then
-      vim.notify("DEBUG: Connection not found for name: [" .. info.conn_name .. "]", vim.log.levels.ERROR)
       return
     end
-
-    vim.notify("DEBUG: Found connection: " .. conn.name .. " (type: " .. conn.type .. ")", vim.log.levels.WARN)
 
     -- Check if this connection is already active
     local current_conn = connections.get_current()

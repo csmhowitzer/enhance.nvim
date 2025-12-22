@@ -1921,13 +1921,24 @@ local function handle_enter(line_num)
   local connections = require("enhance.connections")
 
   if info.type == "connection" then
-    -- Test connection before expanding
     local conn = connections.get_connection(info.conn_name)
     if not conn then
       return
     end
 
-    -- Test the connection
+    -- Check if this connection is already active
+    local current_conn = connections.get_current()
+    local is_already_connected = current_conn and current_conn.name == conn.name
+
+    if is_already_connected then
+      -- Already connected - just toggle expansion without reconnecting
+      local conn_key = "conn:" .. conn.name
+      expanded[conn_key] = not expanded[conn_key]
+      refresh_explorer()
+      return
+    end
+
+    -- Not connected yet - test the connection
     vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
     local executor = require("enhance.executor")
     local success, error_msg = executor.test_connection(conn)

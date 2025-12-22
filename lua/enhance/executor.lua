@@ -171,15 +171,35 @@ function M.test_connection(connection)
       '-d', connection.database,
     }
 
+    -- Add port if specified
+    if connection.port then
+      table.insert(cmd, '-p')
+      table.insert(cmd, tostring(connection.port))
+    end
+
     if connection.user then
       table.insert(cmd, '-U')
       table.insert(cmd, connection.user)
+    end
+
+    -- Handle password
+    if connection.password then
+      -- Set PGPASSWORD environment variable
+      vim.fn.setenv('PGPASSWORD', connection.password)
+    else
+      -- No password - add -w flag to prevent password prompt
+      table.insert(cmd, '-w')
     end
 
     table.insert(cmd, '-c')
     table.insert(cmd, 'SELECT 1;')
 
     local output = vim.fn.system(cmd)
+
+    -- Clear password from environment
+    if connection.password then
+      vim.fn.setenv('PGPASSWORD', nil)
+    end
 
     if vim.v.shell_error ~= 0 then
       return false, "Failed to connect to PostgreSQL: " .. output

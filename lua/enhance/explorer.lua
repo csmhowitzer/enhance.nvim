@@ -1274,18 +1274,20 @@ local function parse_line(line, line_num)
     -- Extract connection name - get everything after the database icon
     -- Line format: "✗ ▸ 󰆼 example.db" or "✗ ▸ 󰆼 SQLite Test"
     -- Try matching each icon type (icons are literal UTF-8 sequences)
-    local conn_name = line:match("󰆼 (.+)$")  -- SQLite (nf-md-database)
-      or line:match("󰘐 (.+)$")  -- SQL Server (nf-md-microsoft)
-      or line:match(" (.+)$")  -- MySQL (nf-dev-mysql)
-      or line:match(" (.+)$")  -- PostgreSQL (nf-dev-postgresql)
-      or line:match("🗄️ (.+)$")  -- Unicode fallback (file cabinet)
-      or line:match("🔷 (.+)$")  -- Unicode SQL Server (blue diamond)
-      or line:match("🐬 (.+)$")  -- Unicode MySQL (dolphin)
-      or line:match("🐘 (.+)$")  -- Unicode PostgreSQL (elephant)
+    local conn_name = line:match("󰆼%s+(.+)$")  -- SQLite (nf-md-database)
+      or line:match("󰘐%s+(.+)$")  -- SQL Server (nf-md-microsoft)
+      or line:match("%s+(.+)$")  -- MySQL (nf-dev-mysql)
+      or line:match("%s+(.+)$")  -- PostgreSQL (nf-dev-postgresql)
+      or line:match("🗄️%s+(.+)$")  -- Unicode fallback (file cabinet)
+      or line:match("🔷%s+(.+)$")  -- Unicode SQL Server (blue diamond)
+      or line:match("🐬%s+(.+)$")  -- Unicode MySQL (dolphin)
+      or line:match("🐘%s+(.+)$")  -- Unicode PostgreSQL (elephant)
 
     if conn_name then
-      -- Trim any trailing whitespace
+      -- Trim any trailing whitespace and leading junk (arrows, etc.)
       conn_name = conn_name:match("^(.-)%s*$")
+      -- Remove any leading arrows or special characters
+      conn_name = conn_name:gsub("^[▸▾✗✓%s]+", "")
       if conn_name and conn_name ~= "" then
         vim.notify("DEBUG parse_line: Extracted connection name: [" .. conn_name .. "]", vim.log.levels.WARN)
         return { type = "connection", conn_name = conn_name }

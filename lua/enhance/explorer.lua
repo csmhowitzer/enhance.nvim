@@ -1268,12 +1268,19 @@ local function parse_line(line, line_num)
   if has_db_icon and indent_level <= 4 then
     -- Extract connection name - get everything after the database icon
     -- Line format: "✗ ▸ 󰆼 example.db" or "✗ ▸ 󰆼 SQLite Test"
-    -- Find the icon position and extract everything after it
-    local icon_pos = line:find("[󰆼󰘐🗄️🔷🐬🐘]")
-    if icon_pos then
-      -- Get everything after the icon and trim whitespace
-      local conn_name = line:sub(icon_pos + vim.fn.strchars(line:match("[󰆼󰘐🗄️🔷🐬🐘]"))):match("^%s*(.-)%s*$")
+    -- Try matching each icon type (icons are literal UTF-8 sequences)
+    local conn_name = line:match("󰆼 (.+)$")  -- SQLite (nf-md-database)
+      or line:match("󰘐 (.+)$")  -- SQL Server (nf-md-microsoft)
+      or line:match(" (.+)$")  -- MySQL (nf-dev-mysql)
+      or line:match(" (.+)$")  -- PostgreSQL (nf-dev-postgresql)
+      or line:match("🗄️ (.+)$")  -- Unicode fallback (file cabinet)
+      or line:match("🔷 (.+)$")  -- Unicode SQL Server (blue diamond)
+      or line:match("🐬 (.+)$")  -- Unicode MySQL (dolphin)
+      or line:match("🐘 (.+)$")  -- Unicode PostgreSQL (elephant)
 
+    if conn_name then
+      -- Trim any trailing whitespace
+      conn_name = conn_name:match("^(.-)%s*$")
       if conn_name and conn_name ~= "" then
         return { type = "connection", conn_name = conn_name }
       end

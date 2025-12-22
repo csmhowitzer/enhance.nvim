@@ -38,6 +38,7 @@ function M.defaults()
     enabled = true,
     connections = {},  -- For backward compatibility with tests
     connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
+    format_results = true,  -- Enable consistent result formatting (parser + formatter)
     keymaps = {
       execute_query = "<F5>",
       save_query = ":w",
@@ -189,12 +190,19 @@ local function parse_mysql_url(url)
 end
 
 ---Parse PostgreSQL URL
----@param url string PostgreSQL URL (e.g., "postgresql://user:password@host:port/database")
+---@param url string PostgreSQL URL (e.g., "postgresql://user:password@host:port/database" or "postgresql://user@host:port/database")
 ---@return table? connection Parsed connection or nil
 ---@return string? error Error message if failed
 local function parse_postgres_url(url)
   -- PostgreSQL format: postgresql://[user[:password]@]host[:port]/database or postgres://...
-  local protocol, user, password, host, port, database = url:match("^(postgres[ql]*)://([^:]+):([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+  -- Try with password first
+  local protocol, user, password, host, port, database = url:match("^(postgres[ql]*)://([^:@]+):([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+
+  -- If no match, try without password
+  if not user then
+    protocol, user, host, port, database = url:match("^(postgres[ql]*)://([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+    password = nil
+  end
 
   if not user or not host or not database then
     return nil, "Invalid PostgreSQL URL format"
@@ -326,6 +334,27 @@ end
 function M.merge(user_config)
   local defaults = M.defaults()
   return vim.tbl_deep_extend("force", defaults, user_config or {})
+end
+
+---Get a configuration value
+---@param key string Configuration key
+---@return any Configuration value
+function M.get(key)
+  local config = require("enhance").config or M.defaults()
+  return config[key]
+end
+
+---Toggle result formatting on/off
+---@return boolean New state
+function M.toggle_formatting()
+  local enhance = require("enhance")
+  local current = enhance.config.format_results
+  enhance.config.format_results = not current
+
+  local state = enhance.config.format_results and "enabled" or "disabled"
+  vim.notify(string.format("Result formatting %s", state), vim.log.levels.INFO)
+
+  return enhance.config.format_results
 end
 
 -- Expose for testing

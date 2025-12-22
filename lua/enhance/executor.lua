@@ -306,11 +306,15 @@ function M.execute_sqlite(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
-        -- Parse and format results for consistent display
-        local parser = require("enhance.parser")
-        local formatter = require("enhance.formatter")
-        local parsed = parser.parse(output_lines, connection.type)
-        local formatted_lines = formatter.format(parsed)
+        -- Parse and format results for consistent display (if enabled)
+        local config = require("enhance.config")
+        local formatted_lines = output_lines
+        if config.get("format_results") then
+          local parser = require("enhance.parser")
+          local formatter = require("enhance.formatter")
+          local parsed = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed)
+        end
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
@@ -423,11 +427,15 @@ function M.execute_sqlserver(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
-        -- Parse and format results for consistent display
-        local parser = require("enhance.parser")
-        local formatter = require("enhance.formatter")
-        local parsed = parser.parse(output_lines, connection.type)
-        local formatted_lines = formatter.format(parsed)
+        -- Parse and format results for consistent display (if enabled)
+        local config = require("enhance.config")
+        local formatted_lines = output_lines
+        if config.get("format_results") then
+          local parser = require("enhance.parser")
+          local formatter = require("enhance.formatter")
+          local parsed = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed)
+        end
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
@@ -527,11 +535,15 @@ function M.execute_mysql(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
-        -- Parse and format results for consistent display
-        local parser = require("enhance.parser")
-        local formatter = require("enhance.formatter")
-        local parsed = parser.parse(output_lines, connection.type)
-        local formatted_lines = formatter.format(parsed)
+        -- Parse and format results for consistent display (if enabled)
+        local config = require("enhance.config")
+        local formatted_lines = output_lines
+        if config.get("format_results") then
+          local parser = require("enhance.parser")
+          local formatter = require("enhance.formatter")
+          local parsed = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed)
+        end
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
@@ -628,11 +640,15 @@ function M.execute_postgres(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
-        -- Parse and format results for consistent display
-        local parser = require("enhance.parser")
-        local formatter = require("enhance.formatter")
-        local parsed = parser.parse(output_lines, connection.type)
-        local formatted_lines = formatter.format(parsed)
+        -- Parse and format results for consistent display (if enabled)
+        local config = require("enhance.config")
+        local formatted_lines = output_lines
+        if config.get("format_results") then
+          local parser = require("enhance.parser")
+          local formatter = require("enhance.formatter")
+          local parsed = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed)
+        end
 
         -- Display results with metadata (no footer added here)
         require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)

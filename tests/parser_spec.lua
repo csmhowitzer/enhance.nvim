@@ -7,6 +7,29 @@ describe("parser", function()
     parser = require("enhance.parser")
   end)
 
+  describe("normalize_headers", function()
+    it("should replace blank headers with default names", function()
+      local headers = { "ID", "", "Name", "   ", "Email" }
+      local normalized = parser._normalize_headers(headers)
+
+      assert.are.same({ "ID", "(column-2)", "Name", "(column-4)", "Email" }, normalized)
+    end)
+
+    it("should preserve non-blank headers", function()
+      local headers = { "ID", "Name", "Email" }
+      local normalized = parser._normalize_headers(headers)
+
+      assert.are.same({ "ID", "Name", "Email" }, normalized)
+    end)
+
+    it("should handle all blank headers", function()
+      local headers = { "", "", "" }
+      local normalized = parser._normalize_headers(headers)
+
+      assert.are.same({ "(column-1)", "(column-2)", "(column-3)" }, normalized)
+    end)
+  end)
+
   describe("parse_sqlserver", function()
     it("should parse SQL Server SELECT output", function()
       local lines = {
@@ -158,6 +181,70 @@ describe("parser", function()
 
       assert.are.same({ "id", "name" }, result.headers)
       assert.equals(0, #result.rows)
+    end)
+  end)
+
+  describe("blank header handling", function()
+    it("should handle blank headers in SQL Server output", function()
+      local lines = {
+        " |Value",
+        "------",
+        "a|test",
+        "(1 rows affected)",
+      }
+
+      local result = parser._parse_sqlserver(lines)
+
+      assert.are.same({ "(column-1)", "Value" }, result.headers)
+      assert.equals(1, #result.rows)
+      assert.are.same({ "a", "test" }, result.rows[1])
+    end)
+
+    it("should handle blank headers in SQLite output", function()
+      -- SQLite with empty column alias: SELECT 'a' as '';
+      -- Produces header line with just whitespace/empty
+      local lines = {
+        "",  -- Empty header line
+        "-",  -- Separator
+        "a",  -- Data
+      }
+
+      local result = parser._parse_sqlite(lines)
+
+      -- Parser detects 1 column from separator, fills missing header with ""
+      -- normalize_headers converts "" to "(column-1)"
+      assert.are.same({ "(column-1)" }, result.headers)
+      assert.equals(1, #result.rows)
+      assert.are.same({ "a" }, result.rows[1])
+    end)
+
+    it("should handle blank headers in MySQL output", function()
+      local lines = {
+        "+-------+",
+        "|       |",
+        "+-------+",
+        "| a     |",
+        "+-------+",
+      }
+
+      local result = parser._parse_mysql(lines)
+
+      assert.are.same({ "(column-1)" }, result.headers)
+      assert.equals(1, #result.rows)
+    end)
+
+    it("should handle blank headers in PostgreSQL output", function()
+      local lines = {
+        "   | name",
+        "---+-----",
+        " a | Bob",
+        "(1 row)",
+      }
+
+      local result = parser._parse_postgresql(lines)
+
+      assert.are.same({ "(column-1)", "name" }, result.headers)
+      assert.equals(1, #result.rows)
     end)
   end)
 end)

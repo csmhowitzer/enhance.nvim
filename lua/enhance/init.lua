@@ -15,6 +15,7 @@ local default_config = {
   enabled = true,
   connections = {},  -- For backward compatibility with tests
   connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
+  format_results = true,  -- Enable consistent result formatting (parser + formatter)
   keymaps = {
     execute_query = "<F5>",
     save_query = ":w",
@@ -159,6 +160,10 @@ function M.setup(opts)
   vim.api.nvim_create_user_command("EnhanceStop", function()
     require("enhance.explorer").stop()
   end, { desc = "Stop enhance workspace" })
+
+  vim.api.nvim_create_user_command("EnhanceToggleFormatting", function()
+    require("enhance.config").toggle_formatting()
+  end, { desc = "Toggle result formatting (parser + formatter)" })
 
   -- Set up global keymaps
   -- Smart keymap: starts workspace if not initialized, otherwise toggles explorer

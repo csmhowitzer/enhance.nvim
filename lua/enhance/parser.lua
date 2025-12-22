@@ -3,6 +3,22 @@
 
 local M = {}
 
+---Normalize headers by replacing blank/empty headers with default names
+---@param headers string[] Headers to normalize
+---@return string[] Normalized headers
+local function normalize_headers(headers)
+  local normalized = {}
+  for i, header in ipairs(headers) do
+    -- Check if header is empty or only whitespace
+    if header == "" or header:match("^%s*$") then
+      table.insert(normalized, string.format("(column-%d)", i))
+    else
+      table.insert(normalized, header)
+    end
+  end
+  return normalized
+end
+
 ---Parse SQL Server (sqlcmd) output
 ---Format: COLUMN|DATA|TYPE with pipe separators
 ---@param lines string[] Raw output lines
@@ -30,6 +46,9 @@ function M.parse_sqlserver(lines)
     for header in header_line:gmatch("[^|]+") do
       table.insert(headers, vim.trim(header))
     end
+
+    -- Normalize headers (replace blank headers with default names)
+    headers = normalize_headers(headers)
 
     -- Parse data rows (after separator, before footer)
     for i = separator_idx + 1, #lines do
@@ -79,13 +98,7 @@ function M.parse_sqlite(lines)
   end
 
   if separator_idx and separator_idx > 1 then
-    -- Parse headers from line before separator
-    local header_line = lines[separator_idx - 1]
-    for header in header_line:gmatch("%S+") do
-      table.insert(headers, header)
-    end
-
-    -- Calculate column positions from separator line
+    -- Calculate column positions from separator line first
     local col_positions = {}
     local separator_line = lines[separator_idx]
     local start_pos = 1
@@ -94,6 +107,20 @@ function M.parse_sqlite(lines)
       table.insert(col_positions, { start = pos, width = #dash_group })
       start_pos = pos + #dash_group
     end
+
+    -- Parse headers from line before separator
+    local header_line = lines[separator_idx - 1]
+    for header in header_line:gmatch("%S+") do
+      table.insert(headers, header)
+    end
+
+    -- Ensure we have as many headers as columns (fill missing with empty strings)
+    while #headers < #col_positions do
+      table.insert(headers, "")
+    end
+
+    -- Normalize headers (replace blank headers with default names)
+    headers = normalize_headers(headers)
 
     -- Parse data rows using column positions
     for i = separator_idx + 1, #lines do
@@ -143,14 +170,14 @@ function M.parse_mysql(lines)
   end
 
   if header_idx then
-    -- Parse headers
+    -- Parse headers (keep blank headers for normalization)
     local header_line = lines[header_idx]
     for header in header_line:gmatch("[^|]+") do
-      local trimmed = vim.trim(header)
-      if trimmed ~= "" then
-        table.insert(headers, trimmed)
-      end
+      table.insert(headers, vim.trim(header))
     end
+
+    -- Normalize headers (replace blank headers with default names)
+    headers = normalize_headers(headers)
 
     -- Parse data rows (skip borders)
     for i = header_idx + 1, #lines do
@@ -205,14 +232,14 @@ function M.parse_postgresql(lines)
   end
 
   if separator_idx and separator_idx > 1 then
-    -- Parse headers from line before separator
+    -- Parse headers from line before separator (keep blank headers for normalization)
     local header_line = lines[separator_idx - 1]
     for header in header_line:gmatch("[^|]+") do
-      local trimmed = vim.trim(header)
-      if trimmed ~= "" then
-        table.insert(headers, trimmed)
-      end
+      table.insert(headers, vim.trim(header))
     end
+
+    -- Normalize headers (replace blank headers with default names)
+    headers = normalize_headers(headers)
 
     -- Parse data rows
     for i = separator_idx + 1, #lines do
@@ -289,6 +316,7 @@ function M.parse(lines, db_type)
 end
 
 -- Expose internal functions for testing
+M._normalize_headers = normalize_headers
 M._parse_sqlserver = M.parse_sqlserver
 M._parse_sqlite = M.parse_sqlite
 M._parse_mysql = M.parse_mysql

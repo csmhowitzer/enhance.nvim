@@ -37,6 +37,95 @@ local connection_buffers = {}
 ---@type integer? Last results buffer number
 local last_results_buf = nil
 
+-- Forward declaration for parse_line (used by helper functions below)
+local parse_line
+
+---Normalize name by replacing spaces with underscores
+---@param name string Name to normalize
+---@return string Normalized name
+local function normalize_name(name)
+  return name:gsub(" ", "_")
+end
+
+---Denormalize name by replacing underscores with spaces
+---@param name string Name to denormalize
+---@return string Denormalized name
+local function denormalize_name(name)
+  return name:gsub("_", " ")
+end
+
+---Check if a string is an arrow symbol
+---@param str string String to check
+---@return boolean True if string is an arrow
+local function is_arrow(str)
+  return str == "▸" or str == "▾"
+end
+
+---Check if a string is a status symbol
+---@param str string String to check
+---@return boolean True if string is a status symbol
+local function is_status(str)
+  return str == "✗" or str == "✓"
+end
+
+---Check if a string is metadata (starts with parenthesis)
+---@param str string String to check
+---@return boolean True if string is metadata
+local function is_metadata(str)
+  return str:match("^%(") ~= nil
+end
+
+---Find parent connection name by looking backwards from current line
+---@param line_num number Current line number
+---@return string? conn_name Parent connection name, or nil if not found
+local function find_parent_connection(line_num)
+  if not explorer_buf or not vim.api.nvim_buf_is_valid(explorer_buf) then
+    return nil
+  end
+
+  local current_indent = vim.api.nvim_buf_get_lines(explorer_buf, line_num - 1, line_num, false)[1]:match("^(%s*)")
+  local current_indent_level = #current_indent
+
+  for i = line_num - 1, 1, -1 do
+    local parent_line = vim.api.nvim_buf_get_lines(explorer_buf, i - 1, i, false)[1]
+    if parent_line then
+      local parent_indent = parent_line:match("^(%s*)")
+      if #parent_indent < current_indent_level then
+        local parent_info = parse_line(parent_line, i)
+        if parent_info and parent_info.type == "connection" then
+          return parent_info.conn_name
+        end
+      end
+    end
+  end
+
+  return nil
+end
+
+---Find parent node info by looking backwards from current line
+---@param line_num number Current line number
+---@return table? parent_info Parent node info, or nil if not found
+local function find_parent_info(line_num)
+  if not explorer_buf or not vim.api.nvim_buf_is_valid(explorer_buf) then
+    return nil
+  end
+
+  local current_indent = vim.api.nvim_buf_get_lines(explorer_buf, line_num - 1, line_num, false)[1]:match("^(%s*)")
+  local current_indent_level = #current_indent
+
+  for i = line_num - 1, 1, -1 do
+    local parent_line = vim.api.nvim_buf_get_lines(explorer_buf, i - 1, i, false)[1]
+    if parent_line then
+      local parent_indent = parent_line:match("^(%s*)")
+      if #parent_indent < current_indent_level then
+        return parse_line(parent_line, i)
+      end
+    end
+  end
+
+  return nil
+end
+
 ---Get connection-specific tmp directory
 ---@param connection table Database connection
 ---@return string? tmp_dir Path to tmp directory, or nil on error
@@ -567,8 +656,8 @@ local function build_explorer_content()
     -- Use arrow icons for expand/collapse (consistent with folders)
     local expand_icon = is_expanded and "▾" or "▸"
 
-    -- Connection line: status, expand arrow, db icon, name
-    local line = string.format("%s %s %s %s", status_icon, expand_icon, icon, conn.name)
+    -- Connection line: status, expand arrow, db icon, name (normalized - spaces to underscores)
+    local line = string.format("%s %s %s %s", status_icon, expand_icon, icon, normalize_name(conn.name))
     table.insert(lines, line)
 
     -- Expanded content
@@ -1142,11 +1231,11 @@ local function handle_tmp_buffer_save(bufnr)
   return true -- Prevent default save behavior
 end
 
----Parse line to extract connection and node information
+---Parse line to extract connection and node information using string splitting
 ---@param line string Line content
 ---@param line_num number Line number
 ---@return table? info Parsed information {type, conn_name, node_type}
-local function parse_line(line, line_num)
+function parse_line(line, line_num)
   if not line or line == "" or line_num <= 2 then
     return nil -- Header lines
   end
@@ -1155,138 +1244,145 @@ local function parse_line(line, line_num)
   local indent = line:match("^(%s*)")
   local indent_level = #indent
 
-  -- Child node (indented) - CHECK THIS FIRST before connection detection
+  -- Remove leading whitespace and split on spaces
+  local trimmed = line:gsub("^%s+", "")
+  local parts = vim.split(trimmed, " ", { trimempty = true })
+
+  if #parts == 0 then
+    return nil
+  end
+
+  -- Parse parts sequentially: [status] [arrow] [icon] [name...] [metadata]
+  -- This approach handles multi-byte UTF-8 correctly and avoids regex
+  local idx = 1
+  local status, arrow, icon, name, metadata
+
+  -- Check for status symbol
+  if idx <= #parts and is_status(parts[idx]) then
+    status = parts[idx]
+    idx = idx + 1
+  end
+
+  -- Check for arrow
+  if idx <= #parts and is_arrow(parts[idx]) then
+    arrow = parts[idx]
+    idx = idx + 1
+  end
+
+  -- Next part should be icon
+  if idx <= #parts then
+    icon = parts[idx]
+    idx = idx + 1
+  else
+    return nil -- No icon found
+  end
+
+  -- Collect all remaining parts as name
+  local name_parts = {}
+  for i = idx, #parts do
+    table.insert(name_parts, parts[i])
+  end
+
+  if #name_parts == 0 then
+    return nil -- No name found
+  end
+
+  -- Check if last part is metadata (e.g., "(2)")
+  if is_metadata(name_parts[#name_parts]) then
+    metadata = name_parts[#name_parts]
+    table.remove(name_parts, #name_parts)
+  end
+
+  -- Join name parts with spaces and trim
+  name = table.concat(name_parts, " ")
+  name = vim.trim(name) -- Remove leading/trailing whitespace
+
+  if not name or name == "" then
+    return nil
+  end
+
+  -- For top-level items (connections), denormalize the name
+  -- For child items, keep the name as-is (it may have spaces)
+  local lookup_name = name
+  if indent_level < 4 then
+    -- Top-level connection - denormalize
+    lookup_name = denormalize_name(name)
+  end
+
+  -- DEBUG: Log parsing details
+  vim.notify(string.format("DEBUG parse_line: indent=%d, icon='%s', name='%s', lookup='%s'",
+    indent_level, icon or "nil", name or "nil", lookup_name or "nil"), vim.log.levels.INFO)
+
+  -- Determine type based on indent level and name
   if indent_level >= 4 then
-    -- Find parent connection by looking backwards
-    for i = line_num - 1, 1, -1 do
-      local parent_line = vim.api.nvim_buf_get_lines(explorer_buf, i - 1, i, false)[1]
-      if parent_line then
-        local parent_indent = parent_line:match("^(%s*)")
-        if #parent_indent < indent_level then
-          local parent_info = parse_line(parent_line, i)
-
-          if parent_info and parent_info.type == "connection" then
-            -- Determine node type
-            if line:match("New Query") then
-              return { type = "new_query", conn_name = parent_info.conn_name }
-            elseif line:match("Buffers") then
-              return { type = "buffers", conn_name = parent_info.conn_name }
-            elseif line:match("Tables") then
-              return { type = "tables", conn_name = parent_info.conn_name }
-            elseif line:match("Saved Queries") then
-              return { type = "saved", conn_name = parent_info.conn_name }
-            end
-          elseif parent_info and parent_info.type == "buffers" then
-            -- This is a buffer item under Buffers folder
-            -- Extract filename from line (everything after the icon)
-            local trimmed = line:match("^%s*(.-)%s*$")
-
-            -- Check if this is a "Results (HH:MM:SS)" child item
-            if trimmed:match("Results%s*%(") then
-              -- This is a result item - need to find parent buffer name
-              -- We'll handle this by looking up the line above
-              return { type = "result_item", conn_name = parent_info.conn_name, line_num = line_num }
-            end
-
-            -- Remove arrow and icon, extract filename
-            -- Use the actual buffer item icon to split the line
-            local buffer_item_icon = get_node_icon("buffer_item")
-
-            -- Remove arrow if present
-            local without_arrow = trimmed:gsub("^[▸▾]%s*", "")
-
-            -- Split on the icon and get everything after it
-            local parts = {}
-            for part in without_arrow:gmatch("[^" .. buffer_item_icon .. "]+") do
-              table.insert(parts, part)
-            end
-
-            -- The filename is the last part (after the icon)
-            local filename = parts[#parts]
-            if filename then
-              -- Trim any leading/trailing whitespace from filename
-              filename = filename:match("^%s*(.-)%s*$")
-              return { type = "buffer_item", conn_name = parent_info.conn_name, buffer_name = filename }
-            end
-          elseif parent_info and parent_info.type == "saved" then
-            -- This is a saved query item under Saved Queries folder
-            -- Line format: "      [icon]  filename"
-            -- Extract everything after leading spaces and icon
-            local trimmed = line:match("^%s*(.-)%s*$")  -- Remove leading/trailing spaces
-            -- Skip the icon (first non-space character) and get the filename
-            -- Pattern: skip any non-alphanumeric characters and spaces, then capture the rest
-            local filename = trimmed:match("^[^%w%s]*%s*(.+)")
-            if filename then
-              return { type = "saved_query_item", conn_name = parent_info.conn_name, query_name = filename }
-            end
-          elseif parent_info and parent_info.type == "tables" then
-            -- This is a table item under Tables folder
-            -- Extract table name - split by whitespace and take last part
-            -- Format: "      ▸   ApplicationEnvironments" or "      ▾   ApplicationEnvironments"
-            local parts = {}
-            for part in line:gmatch("%S+") do
-              table.insert(parts, part)
-            end
-
-            local table_name = parts[#parts] -- Last non-whitespace part
-            if table_name then
-              return { type = "table", conn_name = parent_info.conn_name, table_name = table_name }
-            end
-          elseif parent_info and parent_info.type == "table" then
-            -- This is a sub-item under a table (Columns, List, PKs, FKs, Indexes, CREATE, UPDATE, DROP, DELETE)
-            local trimmed = line:match("^%s*(.-)%s*$")
-            if trimmed:match("Columns") then
-              return { type = "table_columns", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("List") then
-              return { type = "table_list", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("Primary Keys") then
-              return { type = "table_pks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("Foreign Keys") then
-              return { type = "table_fks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("Indexes") then
-              return { type = "table_indexes", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("CREATE Table") then
-              return { type = "table_create", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("UPDATE Template") then
-              return { type = "table_update", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("DROP Table") then
-              return { type = "table_drop", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            elseif trimmed:match("DELETE Records") then
-              return { type = "table_delete_records", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
-            end
+    -- This is a child node - need to find parent
+    -- For now, check the name to determine type
+    if name:match("New") and name:match("Query") then
+      -- Find parent connection
+      local parent_conn = find_parent_connection(line_num)
+      if parent_conn then
+        return { type = "new_query", conn_name = parent_conn }
+      end
+    elseif name:match("Buffers") then
+      local parent_conn = find_parent_connection(line_num)
+      if parent_conn then
+        return { type = "buffers", conn_name = parent_conn }
+      end
+    elseif name:match("Tables") then
+      local parent_conn = find_parent_connection(line_num)
+      if parent_conn then
+        return { type = "tables", conn_name = parent_conn }
+      end
+    elseif name:match("Saved") then
+      local parent_conn = find_parent_connection(line_num)
+      if parent_conn then
+        return { type = "saved", conn_name = parent_conn }
+      end
+    else
+      -- Could be buffer_item, table, saved_query_item, etc.
+      -- Need to check parent type
+      local parent_info = find_parent_info(line_num)
+      if parent_info then
+        if parent_info.type == "buffers" then
+          -- Check if this is a Results item
+          if name:match("Results") and metadata then
+            return { type = "result_item", conn_name = parent_info.conn_name, line_num = line_num }
           end
-          break
+          -- Buffer names are NOT normalized, use as-is
+          return { type = "buffer_item", conn_name = parent_info.conn_name, buffer_name = name }
+        elseif parent_info.type == "tables" then
+          -- Table names are NOT normalized, use as-is
+          return { type = "table", conn_name = parent_info.conn_name, table_name = name }
+        elseif parent_info.type == "saved" then
+          -- Query names are NOT normalized, use as-is
+          return { type = "saved_query_item", conn_name = parent_info.conn_name, query_name = name }
+        elseif parent_info.type == "table" then
+          -- Table sub-items (Columns, List, etc.)
+          if name:match("Columns") then
+            return { type = "table_columns", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("List") then
+            return { type = "table_list", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("Primary") then
+            return { type = "table_pks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("Foreign") then
+            return { type = "table_fks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("Indexes") then
+            return { type = "table_indexes", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("CREATE") then
+            return { type = "table_create", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("UPDATE") then
+            return { type = "table_update", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("DROP") then
+            return { type = "table_drop", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          elseif name:match("DELETE") then
+            return { type = "table_delete_records", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+          end
         end
       end
     end
-  end
-
-  -- Connection line - check if it contains a database icon
-  -- Database icons: 󰆼 (sqlite), 󰘐 (sqlserver),  (mysql),  (postgres), 🗄️🔷🐬🐘 (unicode)
-  local has_db_icon = line:match("[󰆼󰘐🗄️🔷🐬🐘]")
-
-  if has_db_icon and indent_level <= 4 then
-    -- Extract connection name - get everything after the database icon
-    -- Line format: "✗ ▸ 󰆼 example.db" or "✗ ▸ 󰆼 SQLite Test"
-    -- Try matching each icon type (icons are literal UTF-8 sequences)
-    local conn_name = line:match("󰆼%s+(.+)$")  -- SQLite (nf-md-database)
-      or line:match("󰘐%s+(.+)$")  -- SQL Server (nf-md-microsoft)
-      or line:match("%s+(.+)$")  -- MySQL (nf-dev-mysql)
-      or line:match("%s+(.+)$")  -- PostgreSQL (nf-dev-postgresql)
-      or line:match("🗄️%s+(.+)$")  -- Unicode fallback (file cabinet)
-      or line:match("🔷%s+(.+)$")  -- Unicode SQL Server (blue diamond)
-      or line:match("🐬%s+(.+)$")  -- Unicode MySQL (dolphin)
-      or line:match("🐘%s+(.+)$")  -- Unicode PostgreSQL (elephant)
-
-    if conn_name then
-      -- Trim any trailing whitespace and leading junk (arrows, etc.)
-      conn_name = conn_name:match("^(.-)%s*$")
-      -- Remove any leading arrows or special characters
-      conn_name = conn_name:gsub("^[▸▾✗✓%s]+", "")
-      if conn_name and conn_name ~= "" then
-        return { type = "connection", conn_name = conn_name }
-      end
-    end
+  else
+    -- Top-level item - likely a connection
+    return { type = "connection", conn_name = lookup_name }
   end
 
   return nil
@@ -1917,11 +2013,8 @@ local function handle_enter(line_num)
 
   local info = parse_line(line, line_num)
   if not info then
-    vim.notify("DEBUG handle_enter: parse_line returned nil for line: [" .. line .. "]", vim.log.levels.ERROR)
     return
   end
-
-  vim.notify("DEBUG handle_enter: Parsed type=" .. info.type .. " for line: [" .. line .. "]", vim.log.levels.WARN)
 
   local connections = require("enhance.connections")
 
@@ -2186,13 +2279,90 @@ function M.start()
   explorer_tab = vim.api.nvim_get_current_tabpage()
   workspace_initialized = true
 
-  -- Set up autocmd to handle saving tmp buffers
+  -- Helper function to auto-save a tmp buffer
+  local function auto_save_tmp_buffer(bufnr)
+    -- Only save if buffer is modified and valid
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].modified then
+      local filepath = vim.api.nvim_buf_get_name(bufnr)
+      if filepath and filepath ~= "" and is_tmp_file(filepath) then
+        -- Get buffer content
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        -- Write to file silently
+        local ok, err = pcall(vim.fn.writefile, lines, filepath)
+        if ok then
+          -- Mark buffer as unmodified
+          vim.bo[bufnr].modified = false
+        else
+          vim.notify(
+            string.format("Failed to auto-save tmp buffer: %s", err),
+            vim.log.levels.WARN
+          )
+        end
+      end
+    end
+  end
+
+  -- Set up autocmd to auto-save tmp buffers when leaving them
+  vim.api.nvim_create_autocmd({ "BufLeave", "BufWinLeave" }, {
+    pattern = "*/enhance.nvim/*/tmp/*.sql",
+    callback = function(args)
+      auto_save_tmp_buffer(args.buf)
+    end,
+    desc = "Auto-save enhance.nvim tmp buffers when leaving"
+  })
+
+  -- Set up autocmd to auto-save tmp buffer before quitting (fires before :q check)
+  vim.api.nvim_create_autocmd("QuitPre", {
+    callback = function()
+      local bufnr = vim.api.nvim_get_current_buf()
+      local filepath = vim.api.nvim_buf_get_name(bufnr)
+      if filepath and is_tmp_file(filepath) then
+        auto_save_tmp_buffer(bufnr)
+      end
+    end,
+    desc = "Auto-save enhance.nvim tmp buffer before quitting"
+  })
+
+  -- Helper function to save all tmp buffers (for testing and VimLeavePre)
+  local function save_all_tmp_buffers()
+    local saved_count = 0
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        local filepath = vim.api.nvim_buf_get_name(bufnr)
+        if filepath and is_tmp_file(filepath) then
+          vim.notify(string.format("DEBUG: Found tmp buffer %d: %s (modified=%s)",
+            bufnr, filepath, tostring(vim.bo[bufnr].modified)), vim.log.levels.INFO)
+          auto_save_tmp_buffer(bufnr)
+          saved_count = saved_count + 1
+        end
+      end
+    end
+    if saved_count > 0 then
+      vim.notify(string.format("Auto-saved %d tmp buffer(s)", saved_count), vim.log.levels.INFO)
+    else
+      vim.notify("No tmp buffers found to save", vim.log.levels.INFO)
+    end
+    return saved_count
+  end
+
+  -- Set up autocmd to auto-save all tmp buffers before quitting Neovim
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    callback = function()
+      save_all_tmp_buffers()
+    end,
+    desc = "Auto-save all enhance.nvim tmp buffers before quitting"
+  })
+
+  -- Expose function for testing
+  M._save_all_tmp_buffers = save_all_tmp_buffers
+
+  -- Set up autocmd to handle manual saving tmp buffers (prompts to save to queries/)
   vim.api.nvim_create_autocmd("BufWriteCmd", {
     pattern = "*/enhance.nvim/*/tmp/*.sql",
     callback = function(args)
       return handle_tmp_buffer_save(args.buf)
     end,
-    desc = "Handle saving enhance.nvim tmp buffers to queries directory"
+    desc = "Handle manual save of enhance.nvim tmp buffers to queries directory"
   })
 
   -- Set up autocmd to clean up buffer tracking when buffers are deleted
@@ -2726,6 +2896,11 @@ M._cleanup_invalid_buffers = cleanup_invalid_buffers
 M._remove_buffer_from_tracking = remove_buffer_from_tracking
 M._get_connection_tmp_dir = get_connection_tmp_dir
 M._get_connection_queries_dir = get_connection_queries_dir
+M._normalize_name = normalize_name
+M._denormalize_name = denormalize_name
+M._is_arrow = is_arrow
+M._is_status = is_status
+M._is_metadata = is_metadata
 
 -- Expose for results module
 M.associate_result_buffer = associate_result_buffer

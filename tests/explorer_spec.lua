@@ -122,17 +122,17 @@ describe("enhance.explorer", function()
     
     it("should include connection in content", function()
       local lines = explorer._build_explorer_content()
-      
-      -- Should have connection line
+
+      -- Should have connection line (names are normalized with underscores)
       local has_connection = false
       for _, line in ipairs(lines) do
-        if line:match("Test DB") then
+        if line:match("Test_DB") then
           has_connection = true
           break
         end
       end
-      
-      assert.is_true(has_connection, "Should include Test DB connection")
+
+      assert.is_true(has_connection, "Should include Test_DB connection")
     end)
     
     it("should not include child nodes when connection is collapsed", function()

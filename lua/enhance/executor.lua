@@ -598,30 +598,36 @@ function M.execute_postgres(connection, query, query_bufnr)
 
   vim.notify("Executing PostgreSQL query...", vim.log.levels.INFO)
 
-  -- Build connection string
-  local conn_str = ""
-  if connection.host then
-    conn_str = conn_str .. "host=" .. connection.host .. " "
-  end
-  if connection.port then
-    conn_str = conn_str .. "port=" .. tostring(connection.port) .. " "
-  end
-  if connection.database then
-    conn_str = conn_str .. "dbname=" .. connection.database .. " "
-  end
-  if connection.user or connection.username then
-    conn_str = conn_str .. "user=" .. (connection.user or connection.username) .. " "
-  end
-  if connection.password then
-    conn_str = conn_str .. "password=" .. connection.password .. " "
-  end
-
+  -- Build command with individual flags (like test_connection does)
   local cmd = {
     'psql',
-    conn_str:match("^%s*(.-)%s*$"), -- Trim whitespace
-    '-c',
-    query,
+    '-h', connection.host or 'localhost',
+    '-d', connection.database,
   }
+
+  -- Add port if specified
+  if connection.port then
+    table.insert(cmd, '-p')
+    table.insert(cmd, tostring(connection.port))
+  end
+
+  -- Add user if specified
+  if connection.user or connection.username then
+    table.insert(cmd, '-U')
+    table.insert(cmd, connection.user or connection.username)
+  end
+
+  -- Handle password via environment variable
+  if connection.password then
+    vim.fn.setenv('PGPASSWORD', connection.password)
+  else
+    -- No password - add -w flag to prevent password prompt
+    table.insert(cmd, '-w')
+  end
+
+  -- Add query
+  table.insert(cmd, '-c')
+  table.insert(cmd, query)
 
   vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -646,6 +652,11 @@ function M.execute_postgres(connection, query, query_bufnr)
     on_exit = function(_, exit_code)
       local end_time = vim.loop.hrtime()
       local duration = (end_time - start_time) / 1000000
+
+      -- Clear password from environment
+      if connection.password then
+        vim.fn.setenv('PGPASSWORD', nil)
+      end
 
       if exit_code == 0 then
         -- Count rows using unified logic

@@ -662,8 +662,11 @@ function M.execute_postgres(connection, query, query_bufnr)
         -- DEBUG: Log raw output
         vim.notify(string.format("DEBUG: Collected %d output lines", #output_lines), vim.log.levels.INFO)
         if #output_lines > 0 then
-          vim.notify(string.format("DEBUG: First line: %s", output_lines[1]), vim.log.levels.INFO)
-          vim.notify(string.format("DEBUG: Last line: %s", output_lines[#output_lines]), vim.log.levels.INFO)
+          -- Show first 10 lines to see the format
+          local preview_count = math.min(10, #output_lines)
+          for i = 1, preview_count do
+            vim.notify(string.format("DEBUG Line %d: [%s]", i, output_lines[i]), vim.log.levels.INFO)
+          end
         end
 
         -- Count rows using unified logic

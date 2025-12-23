@@ -659,8 +659,16 @@ function M.execute_postgres(connection, query, query_bufnr)
       end
 
       if exit_code == 0 then
+        -- DEBUG: Log raw output
+        vim.notify(string.format("DEBUG: Collected %d output lines", #output_lines), vim.log.levels.INFO)
+        if #output_lines > 0 then
+          vim.notify(string.format("DEBUG: First line: %s", output_lines[1]), vim.log.levels.INFO)
+          vim.notify(string.format("DEBUG: Last line: %s", output_lines[#output_lines]), vim.log.levels.INFO)
+        end
+
         -- Count rows using unified logic
         local row_count = count_rows(output_lines, connection.type)
+        vim.notify(string.format("DEBUG: Row count: %d, output_lines after count: %d", row_count, #output_lines), vim.log.levels.INFO)
 
         -- Build metadata
         local metadata = {
@@ -678,7 +686,9 @@ function M.execute_postgres(connection, query, query_bufnr)
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
           local parsed = parser.parse(output_lines, connection.type)
+          vim.notify(string.format("DEBUG: Parsed headers: %d, rows: %d", #parsed.headers, #parsed.rows), vim.log.levels.INFO)
           formatted_lines = formatter.format(parsed)
+          vim.notify(string.format("DEBUG: Formatted lines: %d", #formatted_lines), vim.log.levels.INFO)
         end
 
         -- Display results with metadata (no footer added here)

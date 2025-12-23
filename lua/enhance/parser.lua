@@ -223,19 +223,29 @@ function M.parse_postgresql(lines)
   local rows = {}
   local separator_idx = nil
 
-  -- Find separator line (dashes with + at intersections)
+  -- Find separator line (dashes with optional + at intersections)
+  -- Single column: "----"
+  -- Multi column: "----+----"
   for i, line in ipairs(lines) do
-    if line:match("^%-+%+") or line:match("^%s*%-+%+") then
+    if line:match("^%-+%+") or line:match("^%s*%-+%+") or line:match("^%s*%-+%s*$") then
       separator_idx = i
       break
     end
   end
 
   if separator_idx and separator_idx > 1 then
-    -- Parse headers from line before separator (keep blank headers for normalization)
+    -- Parse headers from line before separator
     local header_line = lines[separator_idx - 1]
-    for header in header_line:gmatch("[^|]+") do
-      table.insert(headers, vim.trim(header))
+
+    -- Check if this is a multi-column table (has | separators)
+    if header_line:match("|") then
+      -- Multi-column: split by |
+      for header in header_line:gmatch("[^|]+") do
+        table.insert(headers, vim.trim(header))
+      end
+    else
+      -- Single column: entire line is the header
+      table.insert(headers, vim.trim(header_line))
     end
 
     -- Normalize headers (replace blank headers with default names)
@@ -249,7 +259,9 @@ function M.parse_postgresql(lines)
         break
       end
 
+      -- Check if multi-column (has |) or single column
       if line:match("|") then
+        -- Multi-column: split by |
         local row = {}
         for cell in line:gmatch("[^|]+") do
           local trimmed = vim.trim(cell)
@@ -259,6 +271,12 @@ function M.parse_postgresql(lines)
         end
         if #row > 0 then
           table.insert(rows, row)
+        end
+      else
+        -- Single column: entire line is the value
+        local trimmed = vim.trim(line)
+        if trimmed ~= "" then
+          table.insert(rows, { trimmed })
         end
       end
     end

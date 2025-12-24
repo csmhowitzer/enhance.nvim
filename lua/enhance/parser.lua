@@ -149,7 +149,7 @@ function M.parse_sqlite(lines)
 end
 
 ---Parse MySQL output
----Format: ASCII table with +----+ borders
+---Format: Tab-separated values (TSV) from mysql -e flag
 ---@param lines string[] Raw output lines
 ---@return table Parsed result {headers: string[], rows: string[][], metadata: table}
 function M.parse_mysql(lines)
@@ -160,44 +160,72 @@ function M.parse_mysql(lines)
   local headers = {}
   local rows = {}
 
-  -- Find header line (between first two border lines)
-  local header_idx = nil
-  for i, line in ipairs(lines) do
-    if line:match("^|") and not line:match("^%+") then
-      header_idx = i
-      break
-    end
-  end
+  -- Check if this is TSV format (tab-separated) or ASCII table format (|)
+  local is_tsv = #lines > 0 and lines[1]:match("\t") and not lines[1]:match("^%+")
 
-  if header_idx then
-    -- Parse headers (keep blank headers for normalization)
-    local header_line = lines[header_idx]
-    for header in header_line:gmatch("[^|]+") do
-      table.insert(headers, vim.trim(header))
-    end
-
-    -- Normalize headers (replace blank headers with default names)
-    headers = normalize_headers(headers)
-
-    -- Parse data rows (skip borders)
-    for i = header_idx + 1, #lines do
-      local line = lines[i]
-      -- Stop at footer lines (not border lines)
-      if line:match("rows? in set") or line:match("rows? affected") then
-        break
+  if is_tsv then
+    -- TSV format: first line is headers, rest are data
+    if #lines > 0 then
+      -- Parse headers
+      for header in lines[1]:gmatch("[^\t]+") do
+        table.insert(headers, vim.trim(header))
       end
 
-      -- Skip border lines, process data lines
-      if line:match("^|") and not line:match("^%+") then
+      -- Normalize headers (replace blank headers with default names)
+      headers = normalize_headers(headers)
+
+      -- Parse data rows
+      for i = 2, #lines do
+        local line = lines[i]
         local row = {}
-        for cell in line:gmatch("[^|]+") do
-          local trimmed = vim.trim(cell)
-          if trimmed ~= "" then
-            table.insert(row, trimmed)
-          end
+        for cell in line:gmatch("[^\t]+") do
+          table.insert(row, vim.trim(cell))
         end
         if #row > 0 then
           table.insert(rows, row)
+        end
+      end
+    end
+  else
+    -- ASCII table format with +----+ borders
+    local header_idx = nil
+    for i, line in ipairs(lines) do
+      if line:match("^|") and not line:match("^%+") then
+        header_idx = i
+        break
+      end
+    end
+
+    if header_idx then
+      -- Parse headers (keep blank headers for normalization)
+      local header_line = lines[header_idx]
+      for header in header_line:gmatch("[^|]+") do
+        table.insert(headers, vim.trim(header))
+      end
+
+      -- Normalize headers (replace blank headers with default names)
+      headers = normalize_headers(headers)
+
+      -- Parse data rows (skip borders)
+      for i = header_idx + 1, #lines do
+        local line = lines[i]
+        -- Stop at footer lines (not border lines)
+        if line:match("rows? in set") or line:match("rows? affected") then
+          break
+        end
+
+        -- Skip border lines, process data lines
+        if line:match("^|") and not line:match("^%+") then
+          local row = {}
+          for cell in line:gmatch("[^|]+") do
+            local trimmed = vim.trim(cell)
+            if trimmed ~= "" then
+              table.insert(row, trimmed)
+            end
+          end
+          if #row > 0 then
+            table.insert(rows, row)
+          end
         end
       end
     end

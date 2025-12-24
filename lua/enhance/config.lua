@@ -168,12 +168,19 @@ local function parse_sqlserver_url(url)
 end
 
 ---Parse MySQL URL
----@param url string MySQL URL (e.g., "mysql://user:password@host:port/database")
+---@param url string MySQL URL (e.g., "mysql://user:password@host:port/database" or "mysql://user@host:port/database")
 ---@return table? connection Parsed connection or nil
 ---@return string? error Error message if failed
 local function parse_mysql_url(url)
   -- MySQL format: mysql://[user[:password]@]host[:port]/database
-  local user, password, host, port, database = url:match("^mysql://([^:]+):([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+  -- Try with password first
+  local user, password, host, port, database = url:match("^mysql://([^:@]+):([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+
+  -- If no match, try without password
+  if not user then
+    user, host, port, database = url:match("^mysql://([^@]+)@([^:/]+):?([^/]*)/(.+)$")
+    password = nil
+  end
 
   if not user or not host or not database then
     return nil, "Invalid MySQL URL format"

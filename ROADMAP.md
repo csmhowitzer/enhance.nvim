@@ -43,3 +43,13 @@
 ### Integration
 - Snippet support
 
+## v2.0 (and future support)
+
+### NoSQL Database Support
+- Redis / **MongoDB**
+  - JSON query input (e.g., `db.users.find({ age: { $gt: 25 } })`)
+  - Pretty-printed JSON document output
+  - Collection browser (not table-based)
+  - Document viewer with syntax highlighting
+  - Basic `find()` queries only
+  - No aggregation pipelines initially

@@ -97,7 +97,14 @@ local function format_row(row, widths, config)
   for i = 1, #widths do
     local width = widths[i] or config.min_column_width
     local cell = row[i]
-    local value = cell or config.null_display
+
+    -- Check for NULL: nil or empty string
+    local value
+    if cell == nil or cell == "" then
+      value = config.null_display
+    else
+      value = cell
+    end
 
     -- Truncate if needed
     local truncated = truncate_value(tostring(value), width, config.truncate_indicator)

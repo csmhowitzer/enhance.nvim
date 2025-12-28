@@ -289,6 +289,11 @@ function M.display(lines, connection, query_bufnr, metadata)
     end)
   end
 
+  -- Apply NULL highlighting to result cells
+  vim.schedule(function()
+    M.apply_null_highlighting(buf, config)
+  end)
+
   vim.notify("Query results displayed", vim.log.levels.INFO)
 
   -- Refresh explorer to show updated results timestamp
@@ -377,8 +382,57 @@ function M._line_number()
   return string.format("%%#%s#%4d ", hl_group, row_num)
 end
 
+---Apply NULL highlighting to result buffer
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+function M.apply_null_highlighting(bufnr, config)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  -- Create namespace for NULL highlights
+  local ns_id = vim.api.nvim_create_namespace('enhance_null_highlight')
+
+  -- Get all lines in buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Determine data start line based on status line position
+  local data_start_line = 0
+  if config.status_line.enabled and config.status_line.position == 'top' then
+    data_start_line = 2  -- Skip status line (2 lines)
+  end
+
+  -- Search for NULL values in each line and highlight them
+  for line_num = data_start_line, #lines - 1 do
+    local line = lines[line_num + 1]  -- Lua is 1-indexed, nvim is 0-indexed
+    if line then
+      -- Find all occurrences of " NULL " (with spaces to avoid partial matches)
+      local start_pos = 1
+      while true do
+        local null_start, null_end = line:find(" NULL ", start_pos, true)
+        if not null_start then
+          break
+        end
+        -- Highlight the word NULL (excluding surrounding spaces)
+        -- null_start points to the space before NULL, so add 1
+        -- null_end points to the space after NULL, so subtract 1
+        vim.api.nvim_buf_add_highlight(
+          bufnr,
+          ns_id,
+          'EnhanceNull',
+          line_num,
+          null_start,  -- Start at space before NULL
+          null_end - 1  -- End before space after NULL
+        )
+        start_pos = null_end + 1
+      end
+    end
+  end
+end
+
 -- Expose for testing
 M._setup_keymaps = M.setup_keymaps
+M._apply_null_highlighting = M.apply_null_highlighting
 
 return M
 

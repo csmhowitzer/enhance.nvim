@@ -102,6 +102,12 @@ function M.setup_highlights()
     bg = '#3f3144',  -- Purple-tinted background for every 5th line
     default = true
   })
+
+  vim.api.nvim_set_hl(0, 'EnhanceNull', {
+    fg = '#f9e2af',  -- Yellow (same as timestamp)
+    italic = true,
+    default = true
+  })
 end
 
 ---Setup enhance.nvim with user configuration

@@ -115,7 +115,9 @@ local function format_row(row, widths, config)
     table.insert(cells, padded)
   end
 
-  return config.separator .. table.concat(cells, config.separator) .. config.separator
+  -- Build row with separators, trim trailing space
+  local row = config.separator .. table.concat(cells, config.separator) .. config.separator
+  return vim.trim(row)
 end
 
 ---Generate header separator line
@@ -128,8 +130,10 @@ local function generate_separator(widths, config)
   for _, width in ipairs(widths) do
     table.insert(segments, string.rep(config.header_separator_char, width))
   end
-  
-  return config.separator .. table.concat(segments, config.separator) .. config.separator
+
+  -- Build separator with pipes, trim trailing space
+  local separator = config.separator .. table.concat(segments, config.separator) .. config.separator
+  return vim.trim(separator)
 end
 
 ---Format parsed result into table lines

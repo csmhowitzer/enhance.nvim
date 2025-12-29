@@ -273,22 +273,38 @@ Explorer automatically refreshes when you execute DDL statements:
 
 #### Smart Result Messages
 
-**DML Statements** (INSERT/UPDATE/DELETE):
+**DML Statements** show clear success messages with row counts:
+
+*INSERT:*
 ```
-Rows: 0 | 10.02ms | example.db | sqlite | 2025-12-17 22:04:38
-─────────────────────────────────────────────────────────────
-
-✓ Query executed successfully
-
-  5 rows affected
+✓ Inserted 5 rows
 ```
 
-**DDL Statements** (CREATE/DROP/ALTER):
+*UPDATE:*
 ```
-Rows: 0 | 52.73ms | example.db | sqlite | 2025-12-17 22:04:38
-─────────────────────────────────────────────────────────────
+✓ Updated 3 rows
+```
 
-✓ Query executed successfully
+*DELETE:*
+```
+✓ Deleted 2 rows
+```
+
+**DDL Statements** show operation-specific success messages:
+
+*CREATE TABLE:*
+```
+✓ Table created successfully
+```
+
+*DROP TABLE:*
+```
+✓ Table dropped successfully
+```
+
+*ALTER TABLE:*
+```
+✓ Table altered successfully
 ```
 
 **SELECT Statements:**

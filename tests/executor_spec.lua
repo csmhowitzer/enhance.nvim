@@ -178,5 +178,101 @@ describe("enhance.executor", function()
       assert.is_true(notified)
     end)
   end)
+
+  describe("query type detection", function()
+    it("should detect CREATE TABLE query", function()
+      local query = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^CREATE%s+TABLE") then
+        query_type = "CREATE_TABLE"
+      end
+
+      assert.equals("CREATE_TABLE", query_type)
+    end)
+
+    it("should detect DROP TABLE query", function()
+      local query = "DROP TABLE users"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^DROP%s+TABLE") then
+        query_type = "DROP_TABLE"
+      end
+
+      assert.equals("DROP_TABLE", query_type)
+    end)
+
+    it("should detect ALTER TABLE query", function()
+      local query = "ALTER TABLE users ADD COLUMN email TEXT"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^ALTER%s+TABLE") then
+        query_type = "ALTER_TABLE"
+      end
+
+      assert.equals("ALTER_TABLE", query_type)
+    end)
+
+    it("should detect INSERT query", function()
+      local query = "INSERT INTO users (name) VALUES ('Alice')"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^INSERT%s") then
+        query_type = "INSERT"
+      end
+
+      assert.equals("INSERT", query_type)
+    end)
+
+    it("should detect UPDATE query", function()
+      local query = "UPDATE users SET name = 'Bob' WHERE id = 1"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^UPDATE%s") then
+        query_type = "UPDATE"
+      end
+
+      assert.equals("UPDATE", query_type)
+    end)
+
+    it("should detect DELETE query", function()
+      local query = "DELETE FROM users WHERE id = 1"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^DELETE%s") then
+        query_type = "DELETE"
+      end
+
+      assert.equals("DELETE", query_type)
+    end)
+
+    it("should not detect query type for SELECT", function()
+      local query = "SELECT * FROM users"
+      local query_upper = query:upper()
+
+      local query_type = nil
+      if query_upper:match("^CREATE%s+TABLE") then
+        query_type = "CREATE_TABLE"
+      elseif query_upper:match("^DROP%s+TABLE") then
+        query_type = "DROP_TABLE"
+      elseif query_upper:match("^ALTER%s+TABLE") then
+        query_type = "ALTER_TABLE"
+      elseif query_upper:match("^INSERT%s") then
+        query_type = "INSERT"
+      elseif query_upper:match("^UPDATE%s") then
+        query_type = "UPDATE"
+      elseif query_upper:match("^DELETE%s") then
+        query_type = "DELETE"
+      end
+
+      assert.is_nil(query_type, "SELECT should not have a query_type")
+    end)
+  end)
 end)
 

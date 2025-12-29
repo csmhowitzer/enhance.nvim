@@ -1405,18 +1405,6 @@ function parse_line(line, line_num)
 		lookup_name = denormalize_name(name)
 	end
 
-	-- DEBUG: Log parsing details
-	vim.notify(
-		string.format(
-			"DEBUG parse_line: indent=%d, icon='%s', name='%s', lookup='%s'",
-			indent_level,
-			icon or "nil",
-			name or "nil",
-			lookup_name or "nil"
-		),
-		vim.log.levels.INFO
-	)
-
 	-- Determine type based on indent level and name
 	if indent_level >= 4 then
 		-- This is a child node - need to find parent

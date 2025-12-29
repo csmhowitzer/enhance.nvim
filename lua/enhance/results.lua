@@ -79,15 +79,17 @@ local function apply_status_line_highlight(bufnr, config, position, highlights)
   end
 
   -- Apply granular highlights to info line
-  for _, hl in ipairs(highlights) do
-    local hl_group = config.status_line.highlights[hl.type]
-    if hl_group then
-      vim.api.nvim_buf_add_highlight(bufnr, ns_id, hl_group, info_line, hl.start_col, hl.end_col)
+  if config.status_line and config.status_line.highlights then
+    for _, hl in ipairs(highlights) do
+      local hl_group = config.status_line.highlights[hl.type]
+      if hl_group then
+        vim.api.nvim_buf_add_highlight(bufnr, ns_id, hl_group, info_line, hl.start_col, hl.end_col)
+      end
     end
-  end
 
-  -- Apply separator highlight to separator line
-  vim.api.nvim_buf_add_highlight(bufnr, ns_id, config.status_line.highlights.separator, separator_line, 0, -1)
+    -- Apply separator highlight to separator line
+    vim.api.nvim_buf_add_highlight(bufnr, ns_id, config.status_line.highlights.separator, separator_line, 0, -1)
+  end
 end
 
 ---Setup dynamic cursor line highlighting that changes on every 5th row
@@ -155,29 +157,43 @@ function M.display(lines, connection, query_bufnr, metadata)
 
   -- Check if this is a DML/DDL statement with no result rows
   local is_non_select_statement = false
-  if metadata then
-    -- DML statement (INSERT/UPDATE/DELETE) with row count
-    if metadata.row_count and metadata.row_count > 0 and data_line_count == 0 then
-      is_non_select_statement = true
-      -- Add success message
+
+  if metadata and metadata.query_type then
+    is_non_select_statement = true
+
+    -- Generate appropriate message based on query type
+    local message = ""
+    if metadata.query_type == "CREATE_TABLE" then
+      message = "✓ Table created successfully"
+    elseif metadata.query_type == "DROP_TABLE" then
+      message = "✓ Table dropped successfully"
+    elseif metadata.query_type == "ALTER_TABLE" then
+      message = "✓ Table altered successfully"
+    elseif metadata.query_type == "INSERT" then
+      message = string.format("✓ Inserted %s row%s",
+        format_number(metadata.row_count),
+        metadata.row_count == 1 and "" or "s")
+    elseif metadata.query_type == "UPDATE" then
+      message = string.format("✓ Updated %s row%s",
+        format_number(metadata.row_count),
+        metadata.row_count == 1 and "" or "s")
+    elseif metadata.query_type == "DELETE" then
+      message = string.format("✓ Deleted %s row%s",
+        format_number(metadata.row_count),
+        metadata.row_count == 1 and "" or "s")
+    end
+
+    -- Add message to output
+    if message ~= "" and data_line_count == 0 then
       table.insert(lines, "")
-      table.insert(lines, string.format("✓ Query executed successfully"))
-      table.insert(lines, "")
-      table.insert(lines, string.format("  %s rows affected", format_number(metadata.row_count)))
-      table.insert(lines, "")
-    -- DDL statement (CREATE/DROP/ALTER) with no data and row_count = 0
-    elseif metadata.row_count == 0 and data_line_count == 0 then
-      is_non_select_statement = true
-      -- Add success message for DDL
-      table.insert(lines, "")
-      table.insert(lines, string.format("✓ Query executed successfully"))
+      table.insert(lines, message)
       table.insert(lines, "")
     end
   end
 
   -- Generate and insert status line if metadata is provided
   local status_highlights = nil
-  if metadata and config.status_line.enabled and config.status_line.position ~= 'none' then
+  if metadata and config.status_line and config.status_line.enabled and config.status_line.position ~= 'none' then
     local status_lines, highlights = generate_status_line(metadata)
     status_highlights = highlights
 
@@ -236,13 +252,10 @@ function M.display(lines, connection, query_bufnr, metadata)
     vim.api.nvim_win_set_buf(results_win, buf)
   else
     -- Create new results window (bottom split from query editor)
-    -- Get UI configuration
-    local config = require("enhance").get_config()
-
     -- Open in configured position
-    if config.ui.results_position == "vsplit" then
+    if config.ui and config.ui.results_position == "vsplit" then
       vim.cmd('vsplit')
-    elseif config.ui.results_position == "tab" then
+    elseif config.ui and config.ui.results_position == "tab" then
       vim.cmd('tabnew')
     else
       vim.cmd('split')
@@ -281,7 +294,7 @@ function M.display(lines, connection, query_bufnr, metadata)
 
   -- Apply status line highlight if metadata is provided
   -- Use vim.schedule to ensure highlights are applied after buffer is fully rendered
-  if metadata and config.status_line.enabled and config.status_line.position ~= 'none' and status_highlights then
+  if metadata and config.status_line and config.status_line.enabled and config.status_line.position ~= 'none' and status_highlights then
     vim.schedule(function()
       -- Re-define highlights to ensure they exist (in case colorscheme changed)
       require("enhance").setup_highlights()
@@ -289,10 +302,31 @@ function M.display(lines, connection, query_bufnr, metadata)
     end)
   end
 
+  -- Detect JSON columns and apply highlighting
+  local json_columns = nil
+  if metadata and metadata.parsed_result then
+    local detector = require("enhance.json_detector")
+    json_columns = detector.detect_json_columns(
+      metadata.parsed_result.headers,
+      metadata.parsed_result.rows
+    )
+
+    -- Store parsed_result in buffer for JSON viewer access
+    vim.api.nvim_buf_set_var(buf, 'enhance_parsed_result', metadata.parsed_result)
+    vim.api.nvim_buf_set_var(buf, 'enhance_json_columns', json_columns)
+  end
+
   -- Apply NULL highlighting to result cells
   vim.schedule(function()
     M.apply_null_highlighting(buf, config)
   end)
+
+  -- Apply JSON highlighting to detected JSON columns
+  if json_columns then
+    vim.schedule(function()
+      M.apply_json_highlighting(buf, config, json_columns)
+    end)
+  end
 
   vim.notify("Query results displayed", vim.log.levels.INFO)
 
@@ -373,9 +407,9 @@ function M._line_number()
 
   -- Every 5th line gets accent color
   if row_num % 5 == 0 then
-    hl_group = config.status_line.highlights.line_number_accent or "EnhanceLineNumberAccent"
+    hl_group = (config.status_line and config.status_line.highlights and config.status_line.highlights.line_number_accent) or "EnhanceLineNumberAccent"
   else
-    hl_group = config.status_line.highlights.line_number or "EnhanceLineNumber"
+    hl_group = (config.status_line and config.status_line.highlights and config.status_line.highlights.line_number) or "EnhanceLineNumber"
   end
 
   -- Return with highlight: %#HighlightGroup#text
@@ -398,7 +432,7 @@ function M.apply_null_highlighting(bufnr, config)
 
   -- Determine data start line based on status line position
   local data_start_line = 0
-  if config.status_line.enabled and config.status_line.position == 'top' then
+  if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
     data_start_line = 2  -- Skip status line (2 lines)
   end
 
@@ -430,9 +464,84 @@ function M.apply_null_highlighting(bufnr, config)
   end
 end
 
+---Apply JSON highlighting to detected JSON columns
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+---@param json_columns table<number, boolean> Map of column_index -> is_json_column
+function M.apply_json_highlighting(bufnr, config, json_columns)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  -- Create namespace for JSON highlights
+  local ns_id = vim.api.nvim_create_namespace('enhance_json_highlight')
+
+  -- Get all lines in buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Determine data start line based on status line position
+  local data_start_line = 0
+  if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
+    data_start_line = 4  -- Skip status line (2 lines) + header (1 line) + separator (1 line)
+  else
+    data_start_line = 2  -- Skip header + separator
+  end
+
+  -- Count how many highlights we apply
+  local highlight_count = 0
+
+  -- Apply highlighting to JSON cells in data rows
+  for line_num = data_start_line, #lines - 1 do
+    local line = lines[line_num + 1]  -- Lua is 1-indexed, nvim is 0-indexed
+    if line and line:match("|") then
+      -- Split line by pipes to get cells
+      -- Note: Lines start with " | " so first split will be empty/whitespace
+      local cells = {}
+      local cell_positions = {}
+      local current_pos = 1
+
+      -- Find all pipe positions and extract cells
+      for cell in line:gmatch("([^|]+)") do
+        local pipe_pos = line:find("|", current_pos, true)
+        if pipe_pos then
+          table.insert(cells, cell)
+          table.insert(cell_positions, { start = current_pos, finish = pipe_pos - 1 })
+          current_pos = pipe_pos + 1
+        end
+      end
+
+      -- Add the last cell after the final pipe
+      if current_pos <= #line then
+        local last_cell = line:sub(current_pos)
+        table.insert(cells, last_cell)
+        table.insert(cell_positions, { start = current_pos, finish = #line })
+      end
+
+      -- Apply highlighting to JSON columns
+      -- cells[1] is empty (before first pipe), so data columns start at cells[2]
+      for col_idx, cell in ipairs(cells) do
+        local data_col_idx = col_idx - 1  -- Adjust for leading empty cell
+        if data_col_idx > 0 and json_columns[data_col_idx] and cell_positions[col_idx] then
+          local pos = cell_positions[col_idx]
+          vim.api.nvim_buf_add_highlight(
+            bufnr,
+            ns_id,
+            'EnhanceJsonCell',
+            line_num,
+            pos.start - 1,  -- 0-indexed
+            pos.finish      -- 0-indexed, exclusive end
+          )
+          highlight_count = highlight_count + 1
+        end
+      end
+    end
+  end
+end
+
 -- Expose for testing
 M._setup_keymaps = M.setup_keymaps
 M._apply_null_highlighting = M.apply_null_highlighting
+M._apply_json_highlighting = M.apply_json_highlighting
 
 return M
 

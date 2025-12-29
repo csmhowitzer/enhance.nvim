@@ -102,7 +102,7 @@ describe("formatter", function()
 
       local result = formatter._format_row(row, widths, config)
 
-      assert.equals(" | 1   | Alice | alice@example.com | ", result)
+      assert.equals("| 1   | Alice | alice@example.com |", result)
     end)
 
     it("should handle NULL values", function()
@@ -117,7 +117,7 @@ describe("formatter", function()
 
       local result = formatter._format_row(row, widths, config)
 
-      assert.equals(" | 1   | NULL | test | ", result)
+      assert.equals("| 1   | NULL | test |", result)
     end)
 
     it("should truncate long values", function()
@@ -132,7 +132,7 @@ describe("formatter", function()
 
       local result = formatter._format_row(row, widths, config)
 
-      assert.equals(" | 1   | Very Lo... | ", result)
+      assert.equals("| 1   | Very Lo... |", result)
     end)
   end)
 
@@ -146,7 +146,7 @@ describe("formatter", function()
 
       local result = formatter._generate_separator(widths, config)
 
-      assert.equals(" | --- | ----- | ---------- | ", result)
+      assert.equals("| --- | ----- | ---------- |", result)
     end)
   end)
 

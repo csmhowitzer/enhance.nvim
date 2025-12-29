@@ -37,18 +37,53 @@ function M.parse_if_json(str)
   return ok, ok and parsed or nil
 end
 
---- Pretty-print JSON with indentation
+--- Pretty-print JSON string preserving key order
+---@param json_str string Original JSON string
+---@return string Formatted JSON string with preserved key order
+function M.pretty_print_string(json_str)
+  -- Use jq if available for best formatting with preserved order
+  local jq_available = vim.fn.executable('jq') == 1
+
+  if jq_available then
+    local result = vim.fn.system('jq .', json_str)
+    if vim.v.shell_error == 0 then
+      return vim.trim(result)
+    end
+  end
+
+  -- Fallback: Use vim.json with --sort-keys=false (Neovim 0.10+)
+  -- Note: vim.json.encode doesn't preserve order, so we use Python as fallback
+  local python_available = vim.fn.executable('python3') == 1
+
+  if python_available then
+    local cmd = [[python3 -c "import sys, json; print(json.dumps(json.loads(sys.stdin.read()), indent=2))"]]
+    local result = vim.fn.system(cmd, json_str)
+    if vim.v.shell_error == 0 then
+      return vim.trim(result)
+    end
+  end
+
+  -- Last resort: Use our custom formatter (will sort keys alphabetically)
+  local ok, parsed = pcall(vim.json.decode, json_str)
+  if ok then
+    return M.pretty_print(parsed)
+  end
+
+  return json_str
+end
+
+--- Pretty-print JSON with indentation (DEPRECATED - sorts keys alphabetically)
 ---@param data any JSON data (table/array)
 ---@param indent? number Initial indentation level (default: 0)
 ---@return string Formatted JSON string
 function M.pretty_print(data, indent)
   indent = indent or 0
   local indent_str = string.rep("  ", indent)
-  
+
   if type(data) == "table" then
     -- Check if it's an array or object
     local is_array = #data > 0
-    
+
     if is_array then
       local lines = { "[" }
       for i, value in ipairs(data) do

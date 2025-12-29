@@ -317,6 +317,22 @@ function M.execute_sqlite(connection, query, query_bufnr)
           row_count = count_rows(output_lines, connection.type)
         end
 
+        -- Detect query type for better messaging
+        local query_type = nil
+        if query_upper:match("^CREATE%s+TABLE") then
+          query_type = "CREATE_TABLE"
+        elseif query_upper:match("^DROP%s+TABLE") then
+          query_type = "DROP_TABLE"
+        elseif query_upper:match("^ALTER%s+TABLE") then
+          query_type = "ALTER_TABLE"
+        elseif query_upper:match("^INSERT%s") then
+          query_type = "INSERT"
+        elseif query_upper:match("^UPDATE%s") then
+          query_type = "UPDATE"
+        elseif query_upper:match("^DELETE%s") then
+          query_type = "DELETE"
+        end
+
         -- Build metadata
         local metadata = {
           execution_time = duration,
@@ -324,16 +340,20 @@ function M.execute_sqlite(connection, query, query_bufnr)
           db_type = connection.type,
           timestamp = os.date("%Y-%m-%d %H:%M:%S"),
           connection_name = connection.name,
+          query_type = query_type,
         }
 
         -- Parse and format results for consistent display (if enabled)
         local config = require("enhance.config")
         local formatted_lines = output_lines
+        local parsed_result = nil
         if config.get("format_results") then
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
-          local parsed = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed)
+          parsed_result = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed_result)
+          -- Add parsed result to metadata for JSON detection
+          metadata.parsed_result = parsed_result
         end
 
         -- Display results with metadata (no footer added here)
@@ -558,11 +578,14 @@ function M.execute_mysql(connection, query, query_bufnr)
         -- Parse and format results for consistent display (if enabled)
         local config = require("enhance.config")
         local formatted_lines = output_lines
+        local parsed_result = nil
         if config.get("format_results") then
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
-          local parsed = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed)
+          parsed_result = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed_result)
+          -- Add parsed result to metadata for JSON detection
+          metadata.parsed_result = parsed_result
         end
 
         -- Display results with metadata (no footer added here)
@@ -674,11 +697,14 @@ function M.execute_postgres(connection, query, query_bufnr)
         -- Parse and format results for consistent display (if enabled)
         local config = require("enhance.config")
         local formatted_lines = output_lines
+        local parsed_result = nil
         if config.get("format_results") then
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
-          local parsed = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed)
+          parsed_result = parser.parse(output_lines, connection.type)
+          formatted_lines = formatter.format(parsed_result)
+          -- Add parsed result to metadata for JSON detection
+          metadata.parsed_result = parsed_result
         end
 
         -- Display results with metadata (no footer added here)

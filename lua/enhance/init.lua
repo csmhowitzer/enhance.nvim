@@ -108,6 +108,30 @@ function M.setup_highlights()
     italic = true,
     default = true
   })
+
+  vim.api.nvim_set_hl(0, 'EnhanceJsonCell', {
+    fg = '#74c7ec',  -- Cyan (scratch-manager title/footer)
+    italic = true,
+    default = true
+  })
+
+  -- JSON viewer floating window highlights
+  vim.api.nvim_set_hl(0, 'EnhanceJsonBorder', {
+    fg = '#f9e2af',  -- Yellow (catppuccin mocha yellow)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceJsonTitle', {
+    fg = '#a6d189',  -- Green (catppuccin mocha green)
+    bold = true,
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceJsonFooter', {
+    fg = '#74c7ec',  -- Cyan (same as JSON cell highlight)
+    italic = true,
+    default = true
+  })
 end
 
 ---Setup enhance.nvim with user configuration
@@ -133,6 +157,15 @@ function M.setup(opts)
 
   -- Initialize modules - load connections from file
   require("enhance.connections").setup(M.config.connections_file)
+
+  -- Setup global keymaps for JSON viewer
+  vim.keymap.set('n', 'gj', function()
+    require("enhance.json_viewer").show()
+  end, { desc = 'Enhance: Show JSON viewer' })
+
+  vim.keymap.set('n', '<leader>dj', function()
+    require("enhance.json_viewer").show()
+  end, { desc = 'Enhance: Display JSON field' })
 
   -- Create user commands
   vim.api.nvim_create_user_command("EnhanceToggle", function()

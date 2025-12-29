@@ -151,5 +151,384 @@ describe("enhance.results", function()
       vim.api.nvim_buf_delete(found_buf, { force = true })
     end)
   end)
+
+  describe("DDL/DML success messages", function()
+    local enhance
+
+    before_each(function()
+      -- Mock enhance module with config
+      package.loaded["enhance"] = {
+        get_config = function()
+          return {
+            format_results = true,
+            status_line = {
+              enabled = true,
+              position = "top",
+              highlights = {
+                label = "EnhanceStatusLabel",
+                value = "EnhanceStatusValue",
+                connection = "EnhanceStatusConnection",
+                db_type = "EnhanceStatusDBType",
+                timestamp = "EnhanceStatusTimestamp",
+                separator = "EnhanceStatusSeparator",
+                line_number = "EnhanceLineNumber",
+                line_number_accent = "EnhanceLineNumberAccent",
+              },
+            },
+            ui = {
+              results_position = "split",
+              show_query_time = true,
+            },
+          }
+        end,
+        setup_highlights = function() end,
+      }
+
+      -- Mock explorer module
+      package.loaded["enhance.explorer"] = {
+        get_results_window = function() return nil end,
+        set_results_window = function() end,
+      }
+
+      -- Reload results module
+      package.loaded["enhance.results"] = nil
+      results = require("enhance.results")
+    end)
+
+    it("should add success message for CREATE TABLE", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "CREATE_TABLE",
+        row_count = 0,
+        execution_time = 0.05,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      -- Find the results buffer
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf, "Should create results buffer")
+
+      -- Get buffer content
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+
+      -- Check for success message
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Table created successfully") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain CREATE TABLE success message")
+
+      -- Cleanup
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for DROP TABLE", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "DROP_TABLE",
+        row_count = 0,
+        execution_time = 0.03,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Table dropped successfully") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain DROP TABLE success message")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for ALTER TABLE", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "ALTER_TABLE",
+        row_count = 0,
+        execution_time = 0.04,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Table altered successfully") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain ALTER TABLE success message")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for INSERT with row count", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "INSERT",
+        row_count = 3,
+        execution_time = 0.02,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Inserted 3 rows") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain INSERT success message with row count")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for INSERT with singular row", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "INSERT",
+        row_count = 1,
+        execution_time = 0.01,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        -- Should be "row" not "rows" for singular
+        if line:match("✓ Inserted 1 row") and not line:match("rows") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain INSERT success message with singular 'row'")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for UPDATE with row count", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "UPDATE",
+        row_count = 5,
+        execution_time = 0.03,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Updated 5 rows") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain UPDATE success message with row count")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should add success message for DELETE with row count", function()
+      local lines = {}
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "DELETE",
+        row_count = 2,
+        execution_time = 0.02,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Deleted 2 rows") then
+          has_message = true
+          break
+        end
+      end
+
+      assert.is_true(has_message, "Should contain DELETE success message with row count")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
+    it("should not add message when there are result rows", function()
+      local lines = { "ProductID  Name", "1          Laptop" }
+      local connection = { type = "sqlite", name = "test.db" }
+      local metadata = {
+        query_type = "INSERT",
+        row_count = 1,
+        execution_time = 0.01,
+        db_type = "sqlite",
+        timestamp = "12:00:00",
+        connection_name = "test.db",
+      }
+
+      results.display(lines, connection, nil, metadata)
+
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local ft = vim.bo[buf].filetype
+          if ft == "enhance-results" then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf)
+
+      local buffer_lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      local has_message = false
+      for _, line in ipairs(buffer_lines) do
+        if line:match("✓ Inserted") then
+          has_message = true
+          break
+        end
+      end
+
+      -- Should NOT add message when there are result rows
+      assert.is_false(has_message, "Should not add message when result rows exist")
+
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+  end)
 end)
 

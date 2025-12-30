@@ -251,11 +251,34 @@ function M.execute_sqlite(connection, query, query_bufnr)
 
   vim.notify("Executing query...", vim.log.levels.INFO)
 
+  -- Detect multiple top-level SELECT statements separated by semicolons
+  -- This is a simple heuristic - it won't catch all cases but will catch the common ones
+  local query_upper = query:upper()
+  local semicolon_count = 0
+  local has_select = false
+
+  for statement in query_upper:gmatch("[^;]+") do
+    local trimmed = statement:gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed:match("^SELECT%s") then
+      if has_select then
+        semicolon_count = semicolon_count + 1
+      end
+      has_select = true
+    end
+  end
+
+  if semicolon_count > 0 then
+    vim.notify(
+      "Warning: Multiple SELECT statements detected. Results may be garbled. Run queries separately for clean output.",
+      vim.log.levels.WARN
+    )
+  end
+
   -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
-  local query_upper = query:upper():gsub("^%s+", "")
-  local is_dml = query_upper:match("^INSERT%s") or
-                 query_upper:match("^UPDATE%s") or
-                 query_upper:match("^DELETE%s")
+  local query_trimmed = query_upper:gsub("^%s+", "")
+  local is_dml = query_trimmed:match("^INSERT%s") or
+                 query_trimmed:match("^UPDATE%s") or
+                 query_trimmed:match("^DELETE%s")
 
   -- For DML statements, append SELECT changes() to get affected row count
   local exec_query = query

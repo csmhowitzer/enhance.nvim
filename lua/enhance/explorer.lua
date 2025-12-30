@@ -3055,6 +3055,8 @@ function M._visual_delete()
 	local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
 
 	-- Collect files to delete
+	-- Note: We only collect buffer_item and saved_query_item types.
+	-- Result items are automatically cleaned up when their parent buffer is deleted.
 	local files_to_delete = {}
 	for line_num = start_line, end_line do
 		if line_num > 0 and line_num <= #lines then

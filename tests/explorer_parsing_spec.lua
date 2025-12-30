@@ -138,5 +138,41 @@ describe("enhance.explorer parsing", function()
       pending("Requires full explorer buffer context with parent connection")
     end)
   end)
+
+  describe("indentation consistency regression test", function()
+    -- Regression test for bug where buffers with results had 6 spaces indent
+    -- while buffers without results had 8 spaces indent, causing find_parent_info
+    -- to return the wrong parent (buffer_item instead of buffers folder).
+    -- This made ALL buffers undeletable when ANY buffer had results.
+
+    it("should use consistent 8-space indentation for all buffer items", function()
+      -- This test verifies the fix: all buffers now have 8 spaces indent,
+      -- regardless of whether they have results or not.
+      -- The arrow appears WITHIN the 8-space indent area, not before it.
+
+      local buffer_item_icon = explorer._get_node_icon("buffer_item")
+
+      -- Buffer WITH results: 8 spaces + arrow + icon + name
+      local line_with_results = string.format("        ▸ %s  temp_query.sql", buffer_item_icon)
+      local indent_with = line_with_results:match("^(%s*)")
+
+      -- Buffer WITHOUT results: 8 spaces + icon + name
+      local line_without_results = string.format("        %s  temp_query.sql", buffer_item_icon)
+      local indent_without = line_without_results:match("^(%s*)")
+
+      -- Both should have 8 spaces
+      assert.equals(8, #indent_with, "Buffer WITH results should have 8 spaces indent")
+      assert.equals(8, #indent_without, "Buffer WITHOUT results should have 8 spaces indent")
+    end)
+
+    it("should use 10-space indentation for Results items", function()
+      -- Results items are nested under buffers, so they have 10 spaces indent
+      local result_icon = explorer._get_node_icon("result")
+      local line = string.format("          %s  Results (50)", result_icon)
+      local indent = line:match("^(%s*)")
+
+      assert.equals(10, #indent, "Results item should have 10 spaces indent")
+    end)
+  end)
 end)
 

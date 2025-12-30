@@ -699,7 +699,7 @@ local function build_explorer_content()
 						local buffer_arrow = get_arrow_icon(buffer_expanded)
 						table.insert(
 							lines,
-							string.format("      %s %s  %s", buffer_arrow, item_buffer_icon, display_name)
+							string.format("        %s %s  %s", buffer_arrow, item_buffer_icon, display_name)
 						)
 
 						-- Show results child item if buffer is expanded
@@ -707,7 +707,7 @@ local function build_explorer_content()
 							local result_icon = get_node_icon("result")
 							table.insert(
 								lines,
-								string.format("        %s  Results (%s)", result_icon, buf_info.result_timestamp)
+								string.format("          %s  Results (%s)", result_icon, buf_info.result_timestamp)
 							)
 						end
 					else
@@ -1442,6 +1442,11 @@ function parse_line(line, line_num)
 					end
 					-- Buffer names are NOT normalized, use as-is
 					return { type = "buffer_item", conn_name = parent_info.conn_name, buffer_name = name }
+				elseif parent_info.type == "buffer_item" then
+					-- This is a child of a buffer (e.g., Results item)
+					if name:match("Results") and metadata then
+						return { type = "result_item", conn_name = parent_info.conn_name, line_num = line_num }
+					end
 				elseif parent_info.type == "tables" then
 					-- Table names are NOT normalized, use as-is
 					return { type = "table", conn_name = parent_info.conn_name, table_name = name }
@@ -3085,6 +3090,7 @@ M._build_explorer_content = build_explorer_content
 M._get_db_icon = get_db_icon
 M._get_node_icon = get_node_icon
 M._parse_line = parse_line
+M._find_parent_info = find_parent_info
 M._cleanup_invalid_buffers = cleanup_invalid_buffers
 M._remove_buffer_from_tracking = remove_buffer_from_tracking
 M._get_connection_tmp_dir = get_connection_tmp_dir
@@ -3094,6 +3100,15 @@ M._denormalize_name = denormalize_name
 M._is_arrow = is_arrow
 M._is_status = is_status
 M._is_metadata = is_metadata
+
+-- Test helpers
+M._set_explorer_buf = function(bufnr)
+	explorer_buf = bufnr
+end
+
+M._set_active_connection = function(conn)
+	active_connection = conn
+end
 
 -- Expose for results module
 M.associate_result_buffer = associate_result_buffer

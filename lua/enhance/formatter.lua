@@ -143,32 +143,102 @@ end
 function M.format(parsed_result, user_config)
   -- Merge config
   local config = vim.tbl_deep_extend("force", default_config, user_config or {})
-  
+
   local headers = parsed_result.headers or {}
   local rows = parsed_result.rows or {}
-  
+
   -- Handle empty results
   if #headers == 0 then
     return { "No results" }
   end
-  
+
   -- Calculate column widths
   local widths = calculate_column_widths(headers, rows, config)
-  
+
   local lines = {}
-  
+
   -- Format header
   table.insert(lines, format_row(headers, widths, config))
-  
+
   -- Add separator
   table.insert(lines, generate_separator(widths, config))
-  
+
   -- Format data rows
   for _, row in ipairs(rows) do
     table.insert(lines, format_row(row, widths, config))
   end
-  
+
   return lines
+end
+
+---Format a single statement result
+---@param statement table Statement Result Object
+---@param statement_num number Statement number (1-based)
+---@param total_statements number Total number of statements
+---@param user_config FormatterConfig? User configuration overrides
+---@return string[] Formatted lines
+local function format_single_statement(statement, statement_num, total_statements, user_config)
+  local lines = {}
+
+  -- Add "Result Set X/Y" header if multiple statements
+  if total_statements > 1 then
+    table.insert(lines, string.format("Result Set %d/%d", statement_num, total_statements))
+    table.insert(lines, "")
+  end
+
+  -- Format based on statement type
+  if statement.result_table then
+    -- SELECT: format table
+    local table_lines = M.format(
+      { headers = statement.result_table.headers, rows = statement.result_table.rows },
+      user_config
+    )
+    for _, line in ipairs(table_lines) do
+      table.insert(lines, line)
+    end
+  elseif statement.message then
+    -- INSERT/UPDATE/DELETE/CREATE/DROP/ALTER: show message
+    table.insert(lines, statement.message)
+  end
+
+  -- Add status line with execution time
+  local status_parts = {}
+  if statement.rows then
+    local plural = statement.rows == 1 and "row" or "rows"
+    table.insert(status_parts, string.format("%d %s", statement.rows, plural))
+  end
+  if statement.elapsed then
+    table.insert(status_parts, string.format("%.2f ms", statement.elapsed))
+  end
+  if #status_parts > 0 then
+    table.insert(lines, "(" .. table.concat(status_parts, ", ") .. ")")
+  end
+
+  return lines
+end
+
+---Format multiple statement results
+---@param statements table[] Array of Statement Result Objects
+---@param user_config FormatterConfig? User configuration overrides
+---@return string[] Formatted lines
+function M.format_multiple_statements(statements, user_config)
+  local all_lines = {}
+
+  for i, statement in ipairs(statements) do
+    local statement_lines = format_single_statement(statement, i, #statements, user_config)
+
+    -- Add statement lines
+    for _, line in ipairs(statement_lines) do
+      table.insert(all_lines, line)
+    end
+
+    -- Add blank line separator between statements (except after last)
+    if i < #statements then
+      table.insert(all_lines, "")
+    end
+  end
+
+  return all_lines
 end
 
 -- Expose internal functions for testing
@@ -177,6 +247,7 @@ M._truncate_value = truncate_value
 M._pad_value = pad_value
 M._format_row = format_row
 M._generate_separator = generate_separator
+M._format_single_statement = format_single_statement
 
 return M
 

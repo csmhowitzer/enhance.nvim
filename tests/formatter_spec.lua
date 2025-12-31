@@ -184,5 +184,181 @@ describe("formatter", function()
       assert.equals("No results", lines[1])
     end)
   end)
+
+  describe("format_multiple_statements", function()
+    it("should format single SELECT statement", function()
+      local statements = {
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Users",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" }, { "2", "Bob" } }
+          },
+          rows = 2,
+          elapsed = 12.5,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- Should have: header line + separator + 2 data rows + status line
+      assert.is_true(#lines >= 4)
+      assert.is_not_nil(lines[1]:match("id"))
+      assert.is_not_nil(lines[1]:match("name"))
+      -- Status line should show row count and execution time
+      local status_line = lines[#lines]
+      assert.is_not_nil(status_line:match("2 rows"))
+      assert.is_not_nil(status_line:match("12.5"))
+    end)
+
+    it("should format INSERT statement with message", function()
+      local statements = {
+        {
+          type = "INSERT",
+          query_text = "INSERT INTO Users VALUES (1, 'Alice')",
+          message = "✓ 1 row inserted",
+          rows = 1,
+          elapsed = 5.2,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- Should have: message line + status line
+      assert.is_true(#lines >= 2)
+      assert.is_not_nil(lines[1]:match("✓ 1 row inserted"))
+      local status_line = lines[#lines]
+      assert.is_not_nil(status_line:match("5.2"))
+    end)
+
+    it("should format two SELECT statements with headers", function()
+      local statements = {
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Users LIMIT 1",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" } }
+          },
+          rows = 1,
+          elapsed = 8.3,
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Products LIMIT 1",
+          result_table = {
+            headers = { "id", "title" },
+            rows = { { "1", "Widget" } }
+          },
+          rows = 1,
+          elapsed = 8.3,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- Should have result set headers
+      local header_found = false
+      for _, line in ipairs(lines) do
+        if line:match("Result Set 1/2") or line:match("Result Set 2/2") then
+          header_found = true
+          break
+        end
+      end
+      assert.is_true(header_found, "Should have 'Result Set X/Y' headers")
+    end)
+
+    it("should format mixed INSERT and SELECT statements", function()
+      local statements = {
+        {
+          type = "INSERT",
+          query_text = "INSERT INTO Users VALUES (1, 'Alice')",
+          message = "✓ 1 row inserted",
+          rows = 1,
+          elapsed = 5.2,
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Users",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" } }
+          },
+          rows = 1,
+          elapsed = 5.2,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- Should have both INSERT message and SELECT table
+      local has_insert_message = false
+      local has_select_table = false
+      for _, line in ipairs(lines) do
+        if line:match("✓ 1 row inserted") then
+          has_insert_message = true
+        end
+        if line:match("id") and line:match("name") then
+          has_select_table = true
+        end
+      end
+      assert.is_true(has_insert_message, "Should have INSERT message")
+      assert.is_true(has_select_table, "Should have SELECT table")
+    end)
+
+    it("should separate multiple result sets with blank lines", function()
+      local statements = {
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Users LIMIT 1",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" } }
+          },
+          rows = 1,
+          elapsed = 8.3,
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM Products LIMIT 1",
+          result_table = {
+            headers = { "id", "title" },
+            rows = { { "1", "Widget" } }
+          },
+          rows = 1,
+          elapsed = 8.3,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- Should have at least one blank line separator
+      local blank_line_found = false
+      for _, line in ipairs(lines) do
+        if line == "" then
+          blank_line_found = true
+          break
+        end
+      end
+      assert.is_true(blank_line_found, "Should have blank line separators between result sets")
+    end)
+  end)
 end)
 

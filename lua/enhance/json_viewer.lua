@@ -19,37 +19,78 @@ local state = {
 ---Check if we're in a results buffer and get cell data
 ---@return boolean is_results_buffer
 ---@return string|nil cell_value
----@return number|nil row_idx
+---@return number|nil row_idx (within result set)
 ---@return number|nil col_idx
+---@return number|nil result_set_idx (for multiple result sets)
 local function get_current_cell_info()
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- Check if this is a results buffer
   if vim.bo[bufnr].filetype ~= 'enhance-results' then
-    return false, nil, nil, nil
+    return false, nil, nil, nil, nil
   end
 
   -- Get cursor position
   local cursor = vim.api.nvim_win_get_cursor(0)
-  local line_num = cursor[1]
+  local line_num = cursor[1]  -- 1-based line number
 
-  -- Get config to determine data start line
-  local config = require("enhance").get_config()
-  -- Status line (2 lines if enabled at top) + header (1) + separator (1) = 4
-  -- Then actual data starts at line 5
-  local data_start_line = 5  -- Default: status (2) + header (1) + separator (1) + first data row
-  if not (config.status_line and config.status_line.enabled and config.status_line.position == 'top') then
-    data_start_line = 3  -- Just header + separator + first data row
+  -- Get all lines to find result set boundaries
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Find all "Result Set X/Y" headers
+  local result_set_indices = {}
+  for i, line in ipairs(lines) do
+    if line:match("^Result Set %d+/%d+") then
+      table.insert(result_set_indices, i)
+    end
   end
+
+  -- Determine which result set we're in
+  local result_set_idx = nil
+  local result_set_start_line = nil
+
+  if #result_set_indices > 0 then
+    -- Multiple result sets - find which one cursor is in
+    for i, rs_line in ipairs(result_set_indices) do
+      local next_rs_line = result_set_indices[i + 1] or (#lines + 1)
+      if line_num >= rs_line and line_num < next_rs_line then
+        result_set_idx = i
+        result_set_start_line = rs_line
+        break
+      end
+    end
+  else
+    -- Single result set (backward compatibility)
+    result_set_idx = 1
+    result_set_start_line = 1
+  end
+
+  if not result_set_idx then
+    return true, nil, nil, nil, nil  -- Not in a result set
+  end
+
+  -- Find the separator line for this result set
+  local separator_line = nil
+  for i = result_set_start_line, #lines do
+    if lines[i]:match("^| %-") then
+      separator_line = i
+      break
+    end
+  end
+
+  if not separator_line then
+    return true, nil, nil, nil, result_set_idx  -- No separator found
+  end
+
+  -- Data starts after separator
+  local data_start_line = separator_line + 1
 
   -- Check if cursor is on a data row
   if line_num < data_start_line then
-    return true, nil, nil, nil  -- In results buffer but not on data row
+    return true, nil, nil, nil, result_set_idx  -- Not on data row
   end
 
-  -- Calculate row index (1-based for Lua array access)
-  -- data_start_line is the first data row (line 4 in this case)
-  -- So line 4 = row 1, line 5 = row 2, etc.
+  -- Calculate row index within this result set (1-based)
   local row_idx = line_num - data_start_line + 1
 
   -- Get the line content
@@ -80,7 +121,7 @@ local function get_current_cell_info()
   end
 
   if not col_idx or col_idx == 0 then
-    return true, nil, nil, nil
+    return true, nil, nil, nil, result_set_idx
   end
 
   -- Extract cell value between the pipes
@@ -88,7 +129,7 @@ local function get_current_cell_info()
   local end_pipe = pipe_positions[col_idx + 1]
   local cell_value = vim.trim(line:sub(start_pipe + 1, end_pipe - 1))
 
-  return true, cell_value, row_idx, col_idx
+  return true, cell_value, row_idx, col_idx, result_set_idx
 end
 
 ---Create or get the persistent JSON buffer
@@ -277,32 +318,48 @@ end
 ---Tries to load cell under cursor if in results buffer, otherwise shows last content
 function M.show()
   -- Try to get current cell info
-  local is_results, cell_value, row_idx, col_idx = get_current_cell_info()
+  local is_results, cell_value, row_idx, col_idx, result_set_idx = get_current_cell_info()
 
-  if is_results and row_idx and col_idx then
+  if is_results and row_idx and col_idx and result_set_idx then
     -- We're in results buffer on a cell - get actual data from buffer metadata
     local bufnr = vim.api.nvim_get_current_buf()
     local ok, parsed_result = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_parsed_result')
     local ok2, json_columns = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_json_columns')
 
     if ok and ok2 and parsed_result and json_columns then
+      -- Handle multiple result sets
+      local rows, headers, json_cols
+      if parsed_result.multiple_results then
+        local result_set = parsed_result.result_sets[result_set_idx]
+        if result_set then
+          rows = result_set.rows
+          headers = result_set.headers
+          json_cols = json_columns[result_set_idx]
+        end
+      else
+        -- Single result set (backward compatibility)
+        rows = parsed_result.rows
+        headers = parsed_result.headers
+        json_cols = json_columns
+      end
+
       -- Check if this column is a JSON column
-      if json_columns[col_idx] then
+      if rows and json_cols and json_cols[col_idx] then
         -- Get actual cell value from parsed_result (not truncated display)
-        local actual_value = parsed_result.rows[row_idx][col_idx]
+        local actual_value = rows[row_idx] and rows[row_idx][col_idx]
 
         if actual_value then
           -- Load this JSON into buffer
-          local total_rows = #parsed_result.rows
+          local total_rows = #rows
           load_json_content(actual_value, row_idx, total_rows)
 
           -- Store state for navigation
-          state.rows = parsed_result.rows
+          state.rows = rows
           state.row_idx = row_idx
           state.col_idx = col_idx
           state.total_rows = total_rows
-          state.json_columns = json_columns
-          state.headers = parsed_result.headers
+          state.json_columns = json_cols
+          state.headers = headers
         end
       end
     end

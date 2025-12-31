@@ -384,10 +384,23 @@ function M.display(lines, connection, query_bufnr, metadata)
   local json_columns = nil
   if metadata and metadata.parsed_result then
     local detector = require("enhance.json_detector")
-    json_columns = detector.detect_json_columns(
-      metadata.parsed_result.headers,
-      metadata.parsed_result.rows
-    )
+
+    -- Handle multiple result sets
+    if metadata.parsed_result.multiple_results then
+      json_columns = {}
+      for i, result_set in ipairs(metadata.parsed_result.result_sets) do
+        json_columns[i] = detector.detect_json_columns(
+          result_set.headers,
+          result_set.rows
+        )
+      end
+    -- Handle single result set (backward compatibility)
+    else
+      json_columns = detector.detect_json_columns(
+        metadata.parsed_result.headers,
+        metadata.parsed_result.rows
+      )
+    end
 
     -- Store parsed_result in buffer for JSON viewer access
     vim.api.nvim_buf_set_var(buf, 'enhance_parsed_result', metadata.parsed_result)
@@ -402,7 +415,7 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Apply JSON highlighting to detected JSON columns
   if json_columns then
     vim.schedule(function()
-      M.apply_json_highlighting(buf, config, json_columns)
+      M.apply_json_highlighting(buf, config, json_columns, metadata)
     end)
   end
 
@@ -552,8 +565,9 @@ end
 ---Apply JSON highlighting to detected JSON columns
 ---@param bufnr number Buffer number
 ---@param config table Plugin configuration
----@param json_columns table<number, boolean> Map of column_index -> is_json_column
-function M.apply_json_highlighting(bufnr, config, json_columns)
+---@param json_columns table<number, boolean>|table<number, table<number, boolean>> Map of column_index -> is_json_column, or array of such maps for multiple result sets
+---@param metadata table? Metadata containing parsed_result info
+function M.apply_json_highlighting(bufnr, config, json_columns, metadata)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
@@ -564,6 +578,25 @@ function M.apply_json_highlighting(bufnr, config, json_columns)
   -- Get all lines in buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
+  -- Check if we have multiple result sets
+  local is_multiple = metadata and metadata.parsed_result and metadata.parsed_result.multiple_results
+
+  if is_multiple then
+    -- Handle multiple result sets - find each table and apply its JSON columns
+    M._apply_json_highlighting_multiple(bufnr, ns_id, lines, json_columns, config)
+  else
+    -- Handle single result set (backward compatibility)
+    M._apply_json_highlighting_single(bufnr, ns_id, lines, json_columns, config)
+  end
+end
+
+---Apply JSON highlighting for a single result set
+---@param bufnr number Buffer number
+---@param ns_id number Namespace ID
+---@param lines string[] Buffer lines
+---@param json_columns table<number, boolean> Map of column_index -> is_json_column
+---@param config table Plugin configuration
+function M._apply_json_highlighting_single(bufnr, ns_id, lines, json_columns, config)
   -- Determine data start line based on status line position
   local data_start_line = 0
   if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
@@ -572,15 +605,69 @@ function M.apply_json_highlighting(bufnr, config, json_columns)
     data_start_line = 2  -- Skip header + separator
   end
 
-  -- Count how many highlights we apply
-  local highlight_count = 0
-
   -- Apply highlighting to JSON cells in data rows
-  for line_num = data_start_line, #lines - 1 do
+  M._highlight_json_cells(bufnr, ns_id, lines, json_columns, data_start_line, #lines - 1)
+end
+
+---Apply JSON highlighting for multiple result sets
+---@param bufnr number Buffer number
+---@param ns_id number Namespace ID
+---@param lines string[] Buffer lines
+---@param json_columns_array table<number, table<number, boolean>> Array of JSON column maps
+---@param config table Plugin configuration
+function M._apply_json_highlighting_multiple(bufnr, ns_id, lines, json_columns_array, config)
+  -- Find all "Result Set X/Y" headers to determine table boundaries
+  local result_set_indices = {}
+  for line_num = 0, #lines - 1 do
+    local line = lines[line_num + 1]
+    if line and line:match("^Result Set %d+/%d+") then
+      table.insert(result_set_indices, line_num)
+    end
+  end
+
+  -- For each result set, find its table and apply JSON highlighting
+  for i, json_columns in ipairs(json_columns_array) do
+    local result_set_line = result_set_indices[i]
+    if result_set_line then
+      -- Find the table separator line (starts with | -)
+      local separator_line = nil
+      for line_num = result_set_line + 1, #lines - 1 do
+        local line = lines[line_num + 1]
+        if line and line:match("^| %-") then
+          separator_line = line_num
+          break
+        end
+      end
+
+      if separator_line then
+        -- Data starts after separator
+        local data_start = separator_line + 1
+
+        -- Data ends at next "Result Set" header or end of buffer
+        local data_end = #lines - 1
+        if result_set_indices[i + 1] then
+          data_end = result_set_indices[i + 1] - 1
+        end
+
+        -- Apply highlighting to this result set's table
+        M._highlight_json_cells(bufnr, ns_id, lines, json_columns, data_start, data_end)
+      end
+    end
+  end
+end
+
+---Helper function to highlight JSON cells in a range of lines
+---@param bufnr number Buffer number
+---@param ns_id number Namespace ID
+---@param lines string[] Buffer lines
+---@param json_columns table<number, boolean> Map of column_index -> is_json_column
+---@param start_line number Start line (0-indexed)
+---@param end_line number End line (0-indexed)
+function M._highlight_json_cells(bufnr, ns_id, lines, json_columns, start_line, end_line)
+  for line_num = start_line, end_line do
     local line = lines[line_num + 1]  -- Lua is 1-indexed, nvim is 0-indexed
-    if line and line:match("|") then
+    if line and line:match("|") and not line:match("^| %-") then  -- Skip separator lines
       -- Split line by pipes to get cells
-      -- Note: Lines start with " | " so first split will be empty/whitespace
       local cells = {}
       local cell_positions = {}
       local current_pos = 1
@@ -616,7 +703,6 @@ function M.apply_json_highlighting(bufnr, config, json_columns)
             pos.start - 1,  -- 0-indexed
             pos.finish      -- 0-indexed, exclusive end
           )
-          highlight_count = highlight_count + 1
         end
       end
     end

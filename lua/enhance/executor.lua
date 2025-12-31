@@ -359,23 +359,6 @@ function M.execute_sqlite(connection, query, query_bufnr)
           -- Phase 2: Parse output (supports multiple result sets)
           parsed_result = parser.parse(output_lines, connection.type)
 
-          -- DEBUG: Print parsed result structure
-          print("=== DEBUG: Parsed Result ===")
-          print("Multiple results:", parsed_result.multiple_results)
-          if parsed_result.result_sets then
-            print("Number of result sets:", #parsed_result.result_sets)
-            for i, rs in ipairs(parsed_result.result_sets) do
-              print(string.format("  Result set %d: %d headers, %d rows", i, #rs.headers, #rs.rows))
-            end
-          else
-            print("Single result:", #(parsed_result.headers or {}), "headers,", #(parsed_result.rows or {}), "rows")
-          end
-          print("Detected statements:", #detected_statements)
-          for i, stmt in ipairs(detected_statements) do
-            print(string.format("  Statement %d: %s", i, stmt.type))
-          end
-          print("=========================")
-
           -- Phase 3 & 4: Match statements to output and format
           if #detected_statements > 0 then
             local statement_matcher = require("enhance.statement_matcher")

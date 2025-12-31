@@ -180,9 +180,21 @@ end
 local function format_single_statement(statement, statement_num, total_statements, user_config)
   local lines = {}
 
-  -- Add "Result Set X/Y" header if multiple statements
+  -- Add "Result Set X/Y | Rows: N" header if multiple statements
   if total_statements > 1 then
-    table.insert(lines, string.format("Result Set %d/%d", statement_num, total_statements))
+    -- Format: "Result Set X/Y" padded to 15 chars, then " | Rows: N"
+    -- This aligns the first pipe with the global status line
+    local result_set_label = string.format("Result Set %d/%d", statement_num, total_statements)
+    local padded_label = result_set_label .. string.rep(" ", math.max(0, 15 - #result_set_label))
+
+    local header = padded_label
+
+    -- Add row count to header if this is a table result
+    if statement.result_table and statement.rows then
+      header = header .. string.format("| Rows: %d", statement.rows)
+    end
+
+    table.insert(lines, header)
     table.insert(lines, "")
   end
 
@@ -201,18 +213,8 @@ local function format_single_statement(statement, statement_num, total_statement
     table.insert(lines, statement.message)
   end
 
-  -- Add status line with execution time
-  local status_parts = {}
-  if statement.rows then
-    local plural = statement.rows == 1 and "row" or "rows"
-    table.insert(status_parts, string.format("%d %s", statement.rows, plural))
-  end
-  if statement.elapsed then
-    table.insert(status_parts, string.format("%.2f ms", statement.elapsed))
-  end
-  if #status_parts > 0 then
-    table.insert(lines, "(" .. table.concat(status_parts, ", ") .. ")")
-  end
+  -- No status line at the bottom for multiple statements
+  -- (global status line will be added by results.display)
 
   return lines
 end
@@ -221,8 +223,10 @@ end
 ---@param statements table[] Array of Statement Result Objects
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
+---@return number Total row count from all table results
 function M.format_multiple_statements(statements, user_config)
   local all_lines = {}
+  local total_rows = 0
 
   for i, statement in ipairs(statements) do
     local statement_lines = format_single_statement(statement, i, #statements, user_config)
@@ -232,13 +236,18 @@ function M.format_multiple_statements(statements, user_config)
       table.insert(all_lines, line)
     end
 
+    -- Count rows from table results only (not messages)
+    if statement.result_table and statement.rows then
+      total_rows = total_rows + statement.rows
+    end
+
     -- Add blank line separator between statements (except after last)
     if i < #statements then
       table.insert(all_lines, "")
     end
   end
 
-  return all_lines
+  return all_lines, total_rows
 end
 
 -- Expose internal functions for testing

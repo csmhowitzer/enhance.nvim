@@ -251,30 +251,12 @@ function M.execute_sqlite(connection, query, query_bufnr)
 
   vim.notify("Executing query...", vim.log.levels.INFO)
 
-  -- Detect multiple top-level SELECT statements separated by semicolons
-  -- This is a simple heuristic - it won't catch all cases but will catch the common ones
-  local query_upper = query:upper()
-  local semicolon_count = 0
-  local has_select = false
-
-  for statement in query_upper:gmatch("[^;]+") do
-    local trimmed = statement:gsub("^%s+", ""):gsub("%s+$", "")
-    if trimmed:match("^SELECT%s") then
-      if has_select then
-        semicolon_count = semicolon_count + 1
-      end
-      has_select = true
-    end
-  end
-
-  if semicolon_count > 0 then
-    vim.notify(
-      "Warning: Multiple SELECT statements detected. Results may be garbled. Run queries separately for clean output.",
-      vim.log.levels.WARN
-    )
-  end
+  -- Detect statements BEFORE execution (Phase 1)
+  local statement_detector = require("enhance.statement_detector")
+  local detected_statements = statement_detector.detect_statements(query)
 
   -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
+  local query_upper = query:upper()
   local query_trimmed = query_upper:gsub("^%s+", "")
   local is_dml = query_trimmed:match("^INSERT%s") or
                  query_trimmed:match("^UPDATE%s") or
@@ -373,8 +355,46 @@ function M.execute_sqlite(connection, query, query_bufnr)
         if config.get("format_results") then
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
+
+          -- Phase 2: Parse output (supports multiple result sets)
           parsed_result = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed_result)
+
+          -- DEBUG: Print parsed result structure
+          print("=== DEBUG: Parsed Result ===")
+          print("Multiple results:", parsed_result.multiple_results)
+          if parsed_result.result_sets then
+            print("Number of result sets:", #parsed_result.result_sets)
+            for i, rs in ipairs(parsed_result.result_sets) do
+              print(string.format("  Result set %d: %d headers, %d rows", i, #rs.headers, #rs.rows))
+            end
+          else
+            print("Single result:", #(parsed_result.headers or {}), "headers,", #(parsed_result.rows or {}), "rows")
+          end
+          print("Detected statements:", #detected_statements)
+          for i, stmt in ipairs(detected_statements) do
+            print(string.format("  Statement %d: %s", i, stmt.type))
+          end
+          print("=========================")
+
+          -- Phase 3 & 4: Match statements to output and format
+          if #detected_statements > 0 then
+            local statement_matcher = require("enhance.statement_matcher")
+            local matched_results = statement_matcher.match_statements(
+              detected_statements,
+              parsed_result,
+              metadata
+            )
+            local total_table_rows
+            formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
+
+            -- Update metadata for multiple statements
+            metadata.statement_count = #detected_statements
+            metadata.total_table_rows = total_table_rows
+          else
+            -- Fallback to old format for backward compatibility
+            formatted_lines = formatter.format(parsed_result)
+          end
+
           -- Add parsed result to metadata for JSON detection
           metadata.parsed_result = parsed_result
         end

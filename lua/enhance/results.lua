@@ -23,19 +23,42 @@ end
 ---@return string[] Status line (2 lines: info, separator)
 ---@return table Highlight positions for granular coloring
 local function generate_status_line(metadata)
-  -- Build info line with parts
-  local parts = {
-    { text = "Rows: ", type = "label" },
-    { text = metadata.row_count and format_number(metadata.row_count) or "N/A", type = "value" },
-    { text = " | ", type = "label" },
-    { text = string.format("%.2fms", metadata.execution_time), type = "value" },
-    { text = " | ", type = "label" },
-    { text = metadata.connection_name, type = "connection" },
-    { text = " | ", type = "label" },
-    { text = metadata.db_type, type = "db_type" },
-    { text = " | ", type = "label" },
-    { text = metadata.timestamp, type = "timestamp" },
-  }
+  local parts = {}
+
+  -- For multiple statements: show "Statements: X | Rows: Y | ..."
+  -- For single statement: show "Rows: X | ..."
+  -- Pad first part to 15 chars to align pipe with per-result-set headers
+  if metadata.statement_count and metadata.statement_count > 1 then
+    -- Multiple statements
+    local first_part = "Statements: " .. tostring(metadata.statement_count)
+    local padding = string.rep(" ", math.max(0, 15 - #first_part))
+
+    table.insert(parts, { text = "Statements: ", type = "label" })
+    table.insert(parts, { text = tostring(metadata.statement_count), type = "value" })
+    table.insert(parts, { text = padding, type = "label" })
+    table.insert(parts, { text = "| ", type = "label" })
+
+    -- Show total table rows if any
+    if metadata.total_table_rows and metadata.total_table_rows > 0 then
+      table.insert(parts, { text = "Rows: ", type = "label" })
+      table.insert(parts, { text = format_number(metadata.total_table_rows), type = "value" })
+      table.insert(parts, { text = " | ", type = "label" })
+    end
+  else
+    -- Single statement
+    table.insert(parts, { text = "Rows: ", type = "label" })
+    table.insert(parts, { text = metadata.row_count and format_number(metadata.row_count) or "N/A", type = "value" })
+    table.insert(parts, { text = " | ", type = "label" })
+  end
+
+  -- Common parts: execution time, connection, db type, timestamp
+  table.insert(parts, { text = string.format("%.2fms", metadata.execution_time), type = "value" })
+  table.insert(parts, { text = " | ", type = "label" })
+  table.insert(parts, { text = metadata.connection_name, type = "connection" })
+  table.insert(parts, { text = " | ", type = "label" })
+  table.insert(parts, { text = metadata.db_type, type = "db_type" })
+  table.insert(parts, { text = " | ", type = "label" })
+  table.insert(parts, { text = metadata.timestamp, type = "timestamp" })
 
   -- Build full info line and track positions for highlighting
   local info = ""
@@ -109,14 +132,21 @@ function M.setup_dynamic_cursorline(bufnr, win)
     local cursor = vim.api.nvim_win_get_cursor(win)
     local line = cursor[1]
 
-    -- Lines 1-4 are status/header, data rows start at line 5
-    if line <= 4 then
+    -- Get line number mapping from buffer variable
+    local ok, mapping = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_line_numbers')
+    if not ok or not mapping then
+      -- Fallback to default highlight if no mapping
       vim.wo[win].winhighlight = 'CursorLine:EnhanceCursorLine'
       return
     end
 
-    -- Calculate data row number (line 5 = row 1, line 6 = row 2, etc.)
-    local row_num = line - 4
+    -- Check if this line has a row number (is a data row)
+    local row_num = mapping[line]
+    if not row_num then
+      -- Not a data row (header, separator, etc.)
+      vim.wo[win].winhighlight = 'CursorLine:EnhanceCursorLine'
+      return
+    end
 
     -- Every 5th row gets accent color
     if row_num % 5 == 0 then
@@ -135,6 +165,45 @@ function M.setup_dynamic_cursorline(bufnr, win)
 
   -- Initial update
   update_cursorline_highlight()
+end
+
+---Build line number mapping for data rows
+---@param lines table Array of buffer lines
+---@param config table Plugin configuration
+---@return table Mapping of line_number -> row_number (1-based)
+local function build_line_number_mapping(lines, config)
+  local mapping = {}
+  local in_data_section = false
+  local current_row = 0
+
+  -- Determine starting line based on status line position
+  local start_line = 1
+  if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
+    start_line = 3  -- Skip status line (2 lines)
+  end
+
+  for i = start_line, #lines do
+    local line = lines[i]
+
+    -- Reset row counter when we hit a new "Result Set" header
+    if line:match("^Result Set") then
+      in_data_section = false
+      current_row = 0
+    -- Skip blank lines
+    elseif line:match("^%s*$") then
+      in_data_section = false
+    -- Detect separator line (all dashes, spaces, and pipes)
+    elseif line:match("^[-%s|]+$") then
+      in_data_section = true
+      current_row = 0
+    -- Data rows come after separator
+    elseif in_data_section then
+      current_row = current_row + 1
+      mapping[i] = current_row
+    end
+  end
+
+  return mapping
 end
 
 ---Display query results in a buffer
@@ -238,6 +307,10 @@ function M.display(lines, connection, query_bufnr, metadata)
     end
   end
 
+  -- Build and store line number mapping for data rows
+  local line_number_mapping = build_line_number_mapping(lines, config)
+  vim.api.nvim_buf_set_var(buf, 'enhance_line_numbers', line_number_mapping)
+
   -- Associate result buffer with query buffer
   if query_bufnr then
     explorer.associate_result_buffer(query_bufnr, buf, timestamp)
@@ -299,6 +372,11 @@ function M.display(lines, connection, query_bufnr, metadata)
       -- Re-define highlights to ensure they exist (in case colorscheme changed)
       require("enhance").setup_highlights()
       apply_status_line_highlight(buf, config, config.status_line.position, status_highlights)
+
+      -- Apply result set highlighting in the same schedule call
+      if metadata.statement_count and metadata.statement_count > 1 then
+        M.apply_result_set_highlighting(buf, config)
+      end
     end)
   end
 
@@ -385,21 +463,28 @@ function M.setup_keymaps(bufnr)
   end, { buffer = bufnr, desc = "Refresh results" })
 end
 
+
+
 ---Custom line number function for statuscolumn
----Lines 1-4 (status line + header) show no numbers
----Line 5+ (data rows) show offset numbers starting at 1
+---Uses buffer-local mapping to show row numbers only for data rows
+---Each result set has its own numbering (1, 2, 3...)
 ---Every 5th line gets a different highlight color
 ---@return string Line number text with highlight
 function M._line_number()
   local line = vim.v.lnum
+  local bufnr = vim.api.nvim_get_current_buf()
 
-  -- No numbers for status line (1-2) and header row (3-4)
-  if line <= 4 then
+  -- Get line number mapping from buffer variable
+  local ok, mapping = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_line_numbers')
+  if not ok or not mapping then
     return ""
   end
 
-  -- Data rows: offset to start at 1
-  local row_num = line - 4
+  -- Check if this line has a row number
+  local row_num = mapping[line]
+  if not row_num then
+    return ""
+  end
 
   -- Get config for highlight groups
   local config = require("enhance").get_config()
@@ -538,10 +623,100 @@ function M.apply_json_highlighting(bufnr, config, json_columns)
   end
 end
 
+---Apply highlighting to "Result Set X/Y" headers
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+function M.apply_result_set_highlighting(bufnr, config)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  -- Create namespace for result set header highlights
+  local ns_id = vim.api.nvim_create_namespace('enhance_result_set_headers')
+
+  -- Get all lines in buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Find and highlight "Result Set X/Y" lines
+  for line_num = 0, #lines - 1 do
+    local line = lines[line_num + 1]  -- Lua is 1-indexed
+    if line and line:match("^Result Set") then
+      -- Pattern: "Result Set X/Y" with optional "| Rows: N"
+      -- We want: "Result Set " (blue) + "X/Y" (green) + " | Rows:" (blue) + " N" (green)
+
+      -- Find "Result Set " and the X/Y part
+      local result_set_end = line:find(" ", 11)  -- Find space after "Result Set"
+      if not result_set_end then
+        result_set_end = 11  -- "Result Set " is 11 chars
+      end
+
+      -- Highlight "Result Set " (label)
+      vim.api.nvim_buf_add_highlight(
+        bufnr,
+        ns_id,
+        'EnhanceStatusLabel',
+        line_num,
+        0,
+        result_set_end
+      )
+
+      -- Find pipe position to know where X/Y ends
+      local pipe_pos = line:find("|")
+
+      if pipe_pos then
+        -- Highlight "X/Y " part (value) - from after "Result Set " to before pipe
+        vim.api.nvim_buf_add_highlight(
+          bufnr,
+          ns_id,
+          'EnhanceStatusValue',
+          line_num,
+          result_set_end,
+          pipe_pos - 1
+        )
+
+        -- Find "Rows:" label
+        local rows_start = line:find("Rows:", pipe_pos)
+        if rows_start then
+          -- Highlight "| Rows:" part (label)
+          vim.api.nvim_buf_add_highlight(
+            bufnr,
+            ns_id,
+            'EnhanceStatusLabel',
+            line_num,
+            pipe_pos - 1,
+            rows_start + 4  -- "Rows:" is 5 chars, so +4 from start
+          )
+
+          -- Highlight the number part (value) - everything after "Rows:"
+          vim.api.nvim_buf_add_highlight(
+            bufnr,
+            ns_id,
+            'EnhanceStatusValue',
+            line_num,
+            rows_start + 5,  -- After "Rows:"
+            #line
+          )
+        end
+      else
+        -- No pipe, highlight X/Y part as value
+        vim.api.nvim_buf_add_highlight(
+          bufnr,
+          ns_id,
+          'EnhanceStatusValue',
+          line_num,
+          result_set_end,
+          #line
+        )
+      end
+    end
+  end
+end
+
 -- Expose for testing
 M._setup_keymaps = M.setup_keymaps
 M._apply_null_highlighting = M.apply_null_highlighting
 M._apply_json_highlighting = M.apply_json_highlighting
+M._apply_result_set_highlighting = M.apply_result_set_highlighting
 
 return M
 

@@ -41,41 +41,53 @@ end
 function M.match_statements(statements, parsed_output, metadata)
   local results = {}
   
-  -- Handle single statement (no multiple_results flag)
+  -- Handle single result set (no multiple_results flag)
+  -- This can happen with:
+  -- 1. Single statement (e.g., just SELECT)
+  -- 2. Multiple statements where only one produces output (e.g., INSERT + SELECT)
   if not parsed_output.multiple_results then
     if #statements == 0 then
       return results
     end
-    
-    local stmt = statements[1]
-    local result = {
-      type = stmt.type,
-      query_text = stmt.text,
-      rows = metadata.row_count or 0,
-      elapsed = metadata.execution_time or 0,
-      db_type = metadata.db_type,
-      db_name = metadata.connection_name,
-      executed_on = metadata.timestamp,
-    }
-    
-    -- SELECT gets result_table
-    if stmt.type == "SELECT" then
-      result.result_table = {
-        headers = parsed_output.headers,
-        rows = parsed_output.rows,
+
+    -- If we have multiple statements but only one result set,
+    -- we need to match the result to the correct statement
+    local result_consumed = false
+
+    for _, stmt in ipairs(statements) do
+      local result = {
+        type = stmt.type,
+        query_text = stmt.text,
+        rows = 0,
+        elapsed = metadata.execution_time or 0,
+        db_type = metadata.db_type,
+        db_name = metadata.connection_name,
+        executed_on = metadata.timestamp,
       }
-      result.message = nil
-    -- INSERT/UPDATE/DELETE get message
-    elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
-      result.result_table = nil
-      result.message = generate_dml_message(stmt.type, metadata.row_count or 0)
-    -- CREATE/DROP/ALTER get DDL message
-    elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
-      result.result_table = nil
-      result.message = generate_ddl_message(metadata.query_type)
+
+      -- SELECT gets result_table (if not already consumed)
+      if stmt.type == "SELECT" and not result_consumed then
+        result.result_table = {
+          headers = parsed_output.headers,
+          rows = parsed_output.rows,
+        }
+        result.rows = #parsed_output.rows
+        result.message = nil
+        result_consumed = true
+      -- INSERT/UPDATE/DELETE get message (no result set)
+      elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
+        result.result_table = nil
+        result.rows = metadata.row_count or 0
+        result.message = generate_dml_message(stmt.type, result.rows)
+      -- CREATE/DROP/ALTER get DDL message (no result set)
+      elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
+        result.result_table = nil
+        result.message = generate_ddl_message(metadata.query_type)
+      end
+
+      table.insert(results, result)
     end
-    
-    table.insert(results, result)
+
     return results
   end
   

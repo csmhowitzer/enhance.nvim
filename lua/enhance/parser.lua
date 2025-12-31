@@ -76,74 +76,122 @@ function M.parse_sqlserver(lines)
   }
 end
 
+---Find all separator line indices in SQLite output
+---@param lines string[] Raw output lines
+---@return number[] Array of separator line indices
+local function find_all_separators(lines)
+  local separators = {}
+  for i, line in ipairs(lines) do
+    if line:match("^[%-%s]+$") and line:match("%S") then
+      table.insert(separators, i)
+    end
+  end
+  return separators
+end
+
+---Parse a single SQLite result set
+---@param lines string[] Raw output lines
+---@param separator_idx number Index of separator line
+---@param end_idx number? Index to stop parsing (exclusive), nil for end of lines
+---@return table Parsed result {headers: string[], rows: string[][]}
+local function parse_single_result_set(lines, separator_idx, end_idx)
+  local headers = {}
+  local rows = {}
+
+  if not separator_idx or separator_idx <= 1 then
+    return { headers = headers, rows = rows }
+  end
+
+  -- Calculate column positions from separator line
+  local col_positions = {}
+  local separator_line = lines[separator_idx]
+  local start_pos = 1
+  for dash_group in separator_line:gmatch("%S+") do
+    local pos = separator_line:find(dash_group, start_pos, true)
+    table.insert(col_positions, { start = pos, width = #dash_group })
+    start_pos = pos + #dash_group
+  end
+
+  -- Parse headers from line before separator
+  local header_line = lines[separator_idx - 1]
+  for header in header_line:gmatch("%S+") do
+    table.insert(headers, header)
+  end
+
+  -- Ensure we have as many headers as columns
+  while #headers < #col_positions do
+    table.insert(headers, "")
+  end
+
+  -- Normalize headers
+  headers = normalize_headers(headers)
+
+  -- Parse data rows using column positions
+  -- If we have end_idx, stop before the next header (which is at end_idx - 1)
+  local stop_at = end_idx and (end_idx - 1) or (#lines + 1)
+  for i = separator_idx + 1, stop_at - 1 do
+    local line = lines[i]
+
+    -- Stop at empty line or next separator
+    if line == "" or line:match("^[%-%s]+$") then
+      break
+    end
+
+    local row = {}
+    for _, col in ipairs(col_positions) do
+      local cell = line:sub(col.start, col.start + col.width - 1)
+      table.insert(row, vim.trim(cell))
+    end
+
+    if #row > 0 then
+      table.insert(rows, row)
+    end
+  end
+
+  return { headers = headers, rows = rows }
+end
+
 ---Parse SQLite (sqlite3 -column -header) output
 ---Format: Space-aligned columns with dash separator
 ---@param lines string[] Raw output lines
----@return table Parsed result {headers: string[], rows: string[][], metadata: table}
+---@return table Parsed result {headers: string[], rows: string[][], metadata: table} or {multiple_results: boolean, result_sets: table[], metadata: table}
 function M.parse_sqlite(lines)
   if not lines or #lines == 0 then
     return { headers = {}, rows = {}, metadata = {} }
   end
 
-  local headers = {}
-  local rows = {}
-  local separator_idx = nil
+  -- Find all separator lines
+  local separators = find_all_separators(lines)
 
-  -- Find separator line (all dashes and spaces)
-  for i, line in ipairs(lines) do
-    if line:match("^[%-%s]+$") then
-      separator_idx = i
-      break
-    end
+  if #separators == 0 then
+    return { headers = {}, rows = {}, metadata = { db_type = "sqlite" } }
   end
 
-  if separator_idx and separator_idx > 1 then
-    -- Calculate column positions from separator line first
-    local col_positions = {}
-    local separator_line = lines[separator_idx]
-    local start_pos = 1
-    for dash_group in separator_line:gmatch("%S+") do
-      local pos = separator_line:find(dash_group, start_pos, true)
-      table.insert(col_positions, { start = pos, width = #dash_group })
-      start_pos = pos + #dash_group
-    end
+  -- Single result set - maintain backward compatibility
+  if #separators == 1 then
+    local result = parse_single_result_set(lines, separators[1], nil)
+    return {
+      headers = result.headers,
+      rows = result.rows,
+      metadata = { db_type = "sqlite" }
+    }
+  end
 
-    -- Parse headers from line before separator
-    local header_line = lines[separator_idx - 1]
-    for header in header_line:gmatch("%S+") do
-      table.insert(headers, header)
-    end
-
-    -- Ensure we have as many headers as columns (fill missing with empty strings)
-    while #headers < #col_positions do
-      table.insert(headers, "")
-    end
-
-    -- Normalize headers (replace blank headers with default names)
-    headers = normalize_headers(headers)
-
-    -- Parse data rows using column positions
-    for i = separator_idx + 1, #lines do
-      local line = lines[i]
-      if line == "" then
-        break
-      end
-
-      local row = {}
-      for _, col in ipairs(col_positions) do
-        local cell = line:sub(col.start, col.start + col.width - 1)
-        table.insert(row, vim.trim(cell))
-      end
-
-      if #row > 0 then
-        table.insert(rows, row)
-      end
-    end
+  -- Multiple result sets
+  local result_sets = {}
+  for i, sep_idx in ipairs(separators) do
+    local next_sep_idx = separators[i + 1]
+    local result = parse_single_result_set(lines, sep_idx, next_sep_idx)
+    table.insert(result_sets, {
+      headers = result.headers,
+      rows = result.rows,
+      metadata = { db_type = "sqlite" }
+    })
   end
 
   return {
-    headers = headers,
-    rows = rows,
+    multiple_results = true,
+    result_sets = result_sets,
     metadata = { db_type = "sqlite" }
   }
 end
@@ -363,6 +411,8 @@ end
 
 -- Expose internal functions for testing
 M._normalize_headers = normalize_headers
+M._find_all_separators = find_all_separators
+M._parse_single_result_set = parse_single_result_set
 M._parse_sqlserver = M.parse_sqlserver
 M._parse_sqlite = M.parse_sqlite
 M._parse_mysql = M.parse_mysql

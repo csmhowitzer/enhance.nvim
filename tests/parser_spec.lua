@@ -112,6 +112,147 @@ describe("parser", function()
       assert.are.same({ "id", "name" }, result.headers)
       assert.equals(0, #result.rows)
     end)
+
+    describe("multiple result sets", function()
+      it("should detect single result set (backward compatibility)", function()
+        local lines = {
+          "id  name ",
+          "--  -----",
+          "1   Alice",
+          "2   Bob  ",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        -- Single result set should NOT have multiple_results flag
+        assert.is_nil(result.multiple_results)
+        assert.are.same({ "id", "name" }, result.headers)
+        assert.equals(2, #result.rows)
+      end)
+
+      it("should detect two result sets with same columns", function()
+        local lines = {
+          "id  name   email         ",
+          "--  -----  --------------",
+          "1   Alice  alice@test.com",
+          "2   Bob    bob@test.com  ",
+          "id  name   email         ",
+          "--  -----  --------------",
+          "1   Alice  alice@test.com",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set
+        assert.are.same({ "id", "name", "email" }, result.result_sets[1].headers)
+        assert.equals(2, #result.result_sets[1].rows)
+        assert.are.same({ "1", "Alice", "alice@test.com" }, result.result_sets[1].rows[1])
+
+        -- Second result set
+        assert.are.same({ "id", "name", "email" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+        assert.are.same({ "1", "Alice", "alice@test.com" }, result.result_sets[2].rows[1])
+      end)
+
+      it("should detect two result sets with different columns", function()
+        local lines = {
+          "id  name ",
+          "--  -----",
+          "1   Alice",
+          "2   Bob  ",
+          "name   email         ",
+          "-----  --------------",
+          "Alice  alice@test.com",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set
+        assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+        assert.equals(2, #result.result_sets[1].rows)
+
+        -- Second result set
+        assert.are.same({ "name", "email" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+      end)
+
+      it("should detect three result sets", function()
+        local lines = {
+          "id",
+          "--",
+          "1 ",
+          "name ",
+          "-----",
+          "Alice",
+          "email         ",
+          "--------------",
+          "alice@test.com",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(3, #result.result_sets)
+
+        assert.are.same({ "id" }, result.result_sets[1].headers)
+        assert.equals(1, #result.result_sets[1].rows)
+
+        assert.are.same({ "name" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+
+        assert.are.same({ "email" }, result.result_sets[3].headers)
+        assert.equals(1, #result.result_sets[3].rows)
+      end)
+
+      it("should handle empty result set followed by data", function()
+        local lines = {
+          "id  name",
+          "--  ----",
+          "id  name ",
+          "--  -----",
+          "1   Alice",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set (empty)
+        assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+        assert.equals(0, #result.result_sets[1].rows)
+
+        -- Second result set (has data)
+        assert.are.same({ "id", "name" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+      end)
+
+      it("should preserve metadata for all result sets", function()
+        local lines = {
+          "id  name ",
+          "--  -----",
+          "1   Alice",
+          "id  name ",
+          "--  -----",
+          "2   Bob  ",
+        }
+
+        local result = parser._parse_sqlite(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals("sqlite", result.metadata.db_type)
+
+        -- Each result set should have metadata
+        assert.equals("sqlite", result.result_sets[1].metadata.db_type)
+        assert.equals("sqlite", result.result_sets[2].metadata.db_type)
+      end)
+    end)
   end)
 
   describe("parse_mysql", function()

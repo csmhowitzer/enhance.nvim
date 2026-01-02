@@ -251,6 +251,20 @@ local function get_result_buffer_info(query_bufnr)
 	return nil, nil
 end
 
+---Get query buffer for a result buffer (reverse lookup)
+---@param result_bufnr number Result buffer number
+---@return number? query_bufnr Query buffer number
+local function get_query_buffer_for_result(result_bufnr)
+	for _, buffers in pairs(connection_buffers) do
+		for _, buf_info in ipairs(buffers) do
+			if buf_info.result_bufnr == result_bufnr then
+				return buf_info.bufnr
+			end
+		end
+	end
+	return nil
+end
+
 ---Remove buffer from tracking (also deletes associated result buffer)
 ---@param bufnr number Buffer number to remove
 local function remove_buffer_from_tracking(bufnr)
@@ -2640,6 +2654,23 @@ function M.start()
 			':<C-u>lua require("enhance.explorer")._visual_delete()<CR>',
 			{ buffer = explorer_buf, desc = "Delete selected files", silent = true }
 		)
+
+		-- Rename saved query with r
+		vim.keymap.set("n", "r", function()
+			local line_num = vim.fn.line(".")
+			local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
+			local line = lines[line_num]
+			local info = parse_line(line, line_num)
+
+			if info and info.type == "saved_query_item" then
+				local filename = info.query_name
+				if filename then
+					M.rename_saved_query(filename)
+				end
+			else
+				vim.notify("Rename only works for saved queries", vim.log.levels.WARN)
+			end
+		end, { buffer = explorer_buf, desc = "Rename saved query" })
 	end
 
 	-- Create window (left drawer, full height)
@@ -2950,6 +2981,80 @@ function M.delete_file(filename)
 	delete_file_impl(filepath)
 end
 
+---Rename a saved query
+---@param old_filename string Current filename (without path)
+function M.rename_saved_query(old_filename)
+	if not active_connection then
+		vim.notify("No active connection", vim.log.levels.ERROR)
+		return
+	end
+
+	-- Find the file
+	local old_filepath = find_file_by_name(old_filename, active_connection.name)
+	if not old_filepath then
+		vim.notify("File not found: " .. old_filename, vim.log.levels.ERROR)
+		return
+	end
+
+	-- Only allow renaming saved queries (not tmp files)
+	if is_tmp_file(old_filepath) then
+		vim.notify("Cannot rename tmp files. Save the query first with :w", vim.log.levels.WARN)
+		return
+	end
+
+	-- Extract current filename without extension
+	local current_name = vim.fn.fnamemodify(old_filepath, ":t:r")
+
+	-- Prompt for new name
+	vim.ui.input({
+		prompt = "Rename query to: ",
+		default = current_name,
+	}, function(input)
+		if not input or input == "" then
+			vim.notify("Rename cancelled", vim.log.levels.INFO)
+			return
+		end
+
+		-- Ensure .sql extension
+		local new_filename = input
+		if not new_filename:match("%.sql$") then
+			new_filename = new_filename .. ".sql"
+		end
+
+		-- Build new filepath
+		local queries_dir = get_connection_queries_dir(active_connection)
+		local new_filepath = queries_dir .. "/" .. new_filename
+
+		-- Check if new name already exists
+		if vim.fn.filereadable(new_filepath) == 1 then
+			vim.notify("File already exists: " .. new_filename, vim.log.levels.ERROR)
+			return
+		end
+
+		-- Rename the file
+		local ok, err = pcall(vim.fn.rename, old_filepath, new_filepath)
+		if not ok then
+			vim.notify(
+				string.format("Failed to rename file: %s\nError: %s", old_filename, err),
+				vim.log.levels.ERROR
+			)
+			return
+		end
+
+		-- Update buffer name if file is open
+		local bufnr = vim.fn.bufnr(old_filepath)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+			pcall(vim.api.nvim_buf_set_name, bufnr, new_filepath)
+		end
+
+		-- Refresh explorer
+		refresh_explorer()
+
+		-- Notify user
+		vim.notify(string.format("Renamed: %s → %s", current_name, vim.fn.fnamemodify(new_filepath, ":t:r")), vim.log.levels.INFO)
+	end)
+end
+
 ---Delete multiple files in bulk (with single confirmation)
 ---@param filenames string[] List of filenames to delete
 function M.delete_files_bulk(filenames)
@@ -3113,6 +3218,8 @@ end
 -- Expose for results module
 M.associate_result_buffer = associate_result_buffer
 M.get_result_buffer_info = get_result_buffer_info
+M.get_query_buffer_for_result = get_query_buffer_for_result
+M.is_tmp_file = is_tmp_file
 M.refresh_explorer = refresh_explorer
 
 return M

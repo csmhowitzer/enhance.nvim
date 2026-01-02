@@ -248,6 +248,7 @@ enhance.nvim uses a standard database URL connection string and a name property 
 - `R` - Refresh explorer (clear cache and redraw)
 - `dd` or `D` - Delete file under cursor
 - `d` or `D` (visual) - Delete selected files
+- `r` - Rename saved query (prompts for new name)
 
 **Query Buffer:**
 - `<F5>` - Execute query (normal mode: entire buffer, visual mode: selection)
@@ -255,6 +256,7 @@ enhance.nvim uses a standard database URL connection string and a name property 
 
 **Results Buffer:**
 - `q` - Close results window
+- `:w` - Save associated query buffer (smart redirect)
 - Normal scrolling (`j`, `k`, `Ctrl-d`, `Ctrl-u`) - Navigate results
 
 ### Features

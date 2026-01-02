@@ -474,6 +474,56 @@ function M.setup_keymaps(bufnr)
   vim.keymap.set('n', 'r', function()
     vim.notify("Refresh not yet implemented", vim.log.levels.WARN)
   end, { buffer = bufnr, desc = "Refresh results" })
+
+  -- Smart redirect :w to save associated query buffer
+  -- Create buffer-local command
+  vim.api.nvim_buf_create_user_command(bufnr, 'Write', function()
+    M._save_query_from_results()
+  end, { desc = "Save associated query buffer" })
+
+  -- Create buffer-local abbreviation for :w -> :Write
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.cmd([[cnoreabbrev <buffer> w Write]])
+  end)
+end
+
+---Save query buffer from results buffer (called via :w abbreviation)
+function M._save_query_from_results()
+  local explorer = require('enhance.explorer')
+  local result_bufnr = vim.api.nvim_get_current_buf()
+
+  -- Find associated query buffer
+  local query_bufnr = explorer.get_query_buffer_for_result(result_bufnr)
+  if not query_bufnr or not vim.api.nvim_buf_is_valid(query_bufnr) then
+    vim.notify("No associated query buffer found", vim.log.levels.WARN)
+    return
+  end
+
+  -- Get query buffer filepath
+  local query_filepath = vim.api.nvim_buf_get_name(query_bufnr)
+  if not query_filepath or query_filepath == "" then
+    vim.notify("Query buffer has no file", vim.log.levels.WARN)
+    return
+  end
+
+  -- Check if it's a tmp file (needs save prompt) or saved query (direct save)
+  local is_tmp = explorer.is_tmp_file(query_filepath)
+
+  if is_tmp then
+    -- Switch to query buffer and trigger save (will show prompt)
+    local query_win = vim.fn.bufwinid(query_bufnr)
+    if query_win ~= -1 then
+      vim.api.nvim_set_current_win(query_win)
+    end
+    vim.cmd('write')
+  else
+    -- It's already a saved query, write it properly to update buffer state
+    vim.api.nvim_buf_call(query_bufnr, function()
+      vim.cmd('write')
+    end)
+    local filename = vim.fn.fnamemodify(query_filepath, ":t")
+    vim.notify("Saved query: " .. filename, vim.log.levels.INFO)
+  end
 end
 
 

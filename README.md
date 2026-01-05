@@ -12,6 +12,8 @@ A pure Lua database interface for Neovim with intelligent result formatting and 
 - **Temp Buffers**: Query buffers stored without needing to save 
 - **Secure**: Credentials stored in external JSON file (outside version control)
 
+<img width="2559" height="1326" alt="image" src="https://github.com/user-attachments/assets/0a79b35d-713d-4fc6-ab62-7cffa4862e2a" />
+
 ## Requirements
 
 ### Neovim Version

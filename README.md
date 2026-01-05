@@ -1,3 +1,6 @@
+<img width="576" height="384" alt="image" src="https://github.com/user-attachments/assets/c9771bd0-8f83-4533-8d29-104db5b8ddce" />
+
+
 # enhance.nvim
 
 A pure Lua database interface for Neovim with intelligent result formatting and modern UI. Compatible with vim-dadbod-ui connection format.

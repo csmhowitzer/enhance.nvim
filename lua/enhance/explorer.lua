@@ -964,8 +964,8 @@ local function apply_status_highlights()
 			end
 		end
 
-		-- Result buffer icon: 󰋼 (purple)
-		icon_start, icon_end = line:find("󰋼")
+		-- Result buffer icon: 󰙮 (purple)
+		icon_start, icon_end = line:find("󰙮")
 		if icon_start and line:match("Results") then
 			vim.api.nvim_buf_add_highlight(
 				explorer_buf,
@@ -2595,10 +2595,6 @@ function M.start()
 		vim.keymap.set("n", "<CR>", function()
 			handle_enter(vim.fn.line("."))
 		end, { buffer = explorer_buf, desc = "Expand/Connect" })
-
-		vim.keymap.set("n", "q", function()
-			M.close()
-		end, { buffer = explorer_buf, desc = "Close explorer" })
 
 		vim.keymap.set("n", "<leader>de", function()
 			M.toggle()

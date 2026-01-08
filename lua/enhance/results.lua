@@ -465,11 +465,6 @@ end
 ---Setup keymaps for results buffer
 ---@param bufnr integer Buffer number
 function M.setup_keymaps(bufnr)
-  -- Close buffer
-  vim.keymap.set('n', 'q', function()
-    vim.cmd('close')
-  end, { buffer = bufnr, desc = "Close results" })
-
   -- Refresh (re-execute last query)
   vim.keymap.set('n', 'r', function()
     vim.notify("Refresh not yet implemented", vim.log.levels.WARN)

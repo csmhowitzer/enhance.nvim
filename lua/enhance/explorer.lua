@@ -649,9 +649,9 @@ local function get_node_icon(node_type)
 	elseif node_type == "buffer_item" then
 		return "" -- vim-dadbod-ui individual buffer icon
 	elseif node_type == "saved_query" then
-		return "" -- vim-dadbod-ui saved query icon
+		return "" -- vim-dadbod-ui saved query icon
 	elseif node_type == "result" then
-		return "󰋼" -- result/chart icon for query results
+		return "󰙮" -- result/chart icon for query results
 	end
 	return ""
 end
@@ -3034,10 +3034,7 @@ function M.rename_saved_query(old_filename)
 		-- Rename the file
 		local ok, err = pcall(vim.fn.rename, old_filepath, new_filepath)
 		if not ok then
-			vim.notify(
-				string.format("Failed to rename file: %s\nError: %s", old_filename, err),
-				vim.log.levels.ERROR
-			)
+			vim.notify(string.format("Failed to rename file: %s\nError: %s", old_filename, err), vim.log.levels.ERROR)
 			return
 		end
 
@@ -3051,7 +3048,10 @@ function M.rename_saved_query(old_filename)
 		refresh_explorer()
 
 		-- Notify user
-		vim.notify(string.format("Renamed: %s → %s", current_name, vim.fn.fnamemodify(new_filepath, ":t:r")), vim.log.levels.INFO)
+		vim.notify(
+			string.format("Renamed: %s → %s", current_name, vim.fn.fnamemodify(new_filepath, ":t:r")),
+			vim.log.levels.INFO
+		)
 	end)
 end
 

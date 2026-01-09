@@ -2136,7 +2136,7 @@ end
 local function create_script_buffer(connection, script, context)
 	-- Create tmp file
 	local tmp_dir = get_connection_tmp_dir(connection)
-	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%Y-%m-%d-%H%M%S"), context)
+	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%m%d%H%M%S"), context)
 
 	-- Write script to file
 	vim.fn.writefile(vim.split(script, "\n"), filename)
@@ -2172,7 +2172,7 @@ end
 local function create_and_execute_query(connection, query, context)
 	-- Create tmp file
 	local tmp_dir = get_connection_tmp_dir(connection)
-	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%Y-%m-%d-%H%M%S"), context)
+	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%m%d%H%M%S"), context)
 
 	-- Write query to file
 	vim.fn.writefile(vim.split(query, "\n"), filename)
@@ -2265,26 +2265,22 @@ local function handle_enter(line_num)
 
 					-- Create tmp file
 					local tmp_dir = get_connection_tmp_dir(conn)
-					local filename = string.format("%s/%s-editor.sql", tmp_dir, os.date("%Y-%m-%d-%H%M%S"))
+					local filename = string.format("%s/%s-tmp.sql", tmp_dir, os.date("%m%d%H%M%S"))
 
 					-- Write content to file
 					vim.fn.writefile(lines, filename)
 
-					-- Switch to file-backed buffer
-					vim.api.nvim_set_current_win(query_editor_win)
-					vim.cmd("edit " .. vim.fn.fnameescape(filename))
+					-- Rename existing buffer to tmp filepath (instead of creating new buffer)
+					pcall(vim.api.nvim_buf_set_name, query_buf, filename)
 
-					-- Get new buffer number
-					local new_buf = vim.api.nvim_get_current_buf()
+					-- Set connection on buffer
+					vim.b[query_buf].enhance_connection = conn
 
-					-- Set connection on new buffer
-					vim.b[new_buf].enhance_connection = conn
-
-					-- Set up keymaps
-					require("enhance.query").setup_keymaps(new_buf)
+					-- Set up keymaps on buffer (may already exist, but ensure they're set)
+					require("enhance.query").setup_keymaps(query_buf)
 
 					-- Track this buffer
-					add_buffer_to_tracking(conn.name, new_buf, filename)
+					add_buffer_to_tracking(conn.name, query_buf, filename)
 				end
 			end
 		end
@@ -2473,8 +2469,7 @@ function M.start()
 		return
 	end
 
-	-- Create a new tab for clean database workspace
-	vim.cmd("tabnew")
+	-- Use current tab for workspace (no new tab creation)
 	explorer_tab = vim.api.nvim_get_current_tabpage()
 	workspace_initialized = true
 
@@ -2916,7 +2911,7 @@ function M.new_query()
 
 	-- Create tmp file
 	local tmp_dir = get_connection_tmp_dir(active_connection)
-	local filename = string.format("%s/%s-new-query.sql", tmp_dir, os.date("%Y-%m-%d-%H%M%S"))
+	local filename = string.format("%s/%s-new-query.sql", tmp_dir, os.date("%m%d%H%M%S"))
 
 	-- Switch to query editor window
 	if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then

@@ -204,14 +204,13 @@ describe("formatter", function()
 
       local lines = formatter.format_multiple_statements(statements)
 
-      -- Should have: header line + separator + 2 data rows + status line
+      -- Should have: header line + separator + 2 data rows (no status line - added by results.display)
       assert.is_true(#lines >= 4)
       assert.is_not_nil(lines[1]:match("id"))
       assert.is_not_nil(lines[1]:match("name"))
-      -- Status line should show row count and execution time
-      local status_line = lines[#lines]
-      assert.is_not_nil(status_line:match("2 rows"))
-      assert.is_not_nil(status_line:match("12.5"))
+      -- Verify we have data rows
+      assert.is_not_nil(lines[3]:match("Alice"))
+      assert.is_not_nil(lines[4]:match("Bob"))
     end)
 
     it("should format INSERT statement with message", function()
@@ -229,11 +228,9 @@ describe("formatter", function()
 
       local lines = formatter.format_multiple_statements(statements)
 
-      -- Should have: message line + status line
-      assert.is_true(#lines >= 2)
+      -- Should have: message line only (no status line - added by results.display)
+      assert.is_true(#lines >= 1)
       assert.is_not_nil(lines[1]:match("✓ 1 row inserted"))
-      local status_line = lines[#lines]
-      assert.is_not_nil(status_line:match("5.2"))
     end)
 
     it("should format two SELECT statements with headers", function()

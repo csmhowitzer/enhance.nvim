@@ -22,20 +22,15 @@ describe("enhance.results", function()
       
       -- Get buffer keymaps
       local keymaps = vim.api.nvim_buf_get_keymap(buf, 'n')
-      
-      -- Check that 'q' and 'r' keymaps exist
-      local has_q = false
+
+      -- Check that 'r' keymap exists (q was removed - use <C-w>q instead)
       local has_r = false
       for _, map in ipairs(keymaps) do
-        if map.lhs == 'q' then
-          has_q = true
-        end
         if map.lhs == 'r' then
           has_r = true
         end
       end
-      
-      assert.is_true(has_q, "Should have 'q' keymap")
+
       assert.is_true(has_r, "Should have 'r' keymap")
       
       -- Cleanup
@@ -52,24 +47,24 @@ describe("enhance.results", function()
       -- Get keymaps for both buffers
       local keymaps1 = vim.api.nvim_buf_get_keymap(buf1, 'n')
       local keymaps2 = vim.api.nvim_buf_get_keymap(buf2, 'n')
-      
-      -- buf1 should have keymaps
-      local buf1_has_q = false
+
+      -- buf1 should have 'r' keymap
+      local buf1_has_r = false
       for _, map in ipairs(keymaps1) do
-        if map.lhs == 'q' then
-          buf1_has_q = true
+        if map.lhs == 'r' then
+          buf1_has_r = true
         end
       end
-      assert.is_true(buf1_has_q)
-      
-      -- buf2 should not have keymaps
-      local buf2_has_q = false
+      assert.is_true(buf1_has_r)
+
+      -- buf2 should not have 'r' keymap
+      local buf2_has_r = false
       for _, map in ipairs(keymaps2) do
-        if map.lhs == 'q' then
-          buf2_has_q = true
+        if map.lhs == 'r' then
+          buf2_has_r = true
         end
       end
-      assert.is_false(buf2_has_q)
+      assert.is_false(buf2_has_r)
       
       -- Cleanup
       vim.api.nvim_buf_delete(buf1, { force = true })

@@ -268,6 +268,9 @@ function M.execute_sqlite(connection, query, query_bufnr)
     exec_query = query .. "; SELECT changes();"
   end
 
+  -- Collect errors for display in results window
+  local error_lines = {}
+
   -- Pass query as command-line argument
   vim.fn.jobstart({
     'sqlite3',
@@ -290,7 +293,7 @@ function M.execute_sqlite(connection, query, query_bufnr)
       if data then
         for _, line in ipairs(data) do
           if line ~= "" then
-            vim.notify("Error: " .. line, vim.log.levels.ERROR)
+            table.insert(error_lines, line)
           end
         end
       end
@@ -399,7 +402,30 @@ function M.execute_sqlite(connection, query, query_bufnr)
           end)
         end
       else
-        vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
+        -- Display error in results window
+        local error_display = {
+          "Query Execution Failed",
+        }
+
+        if #error_lines > 0 then
+          for _, err_line in ipairs(error_lines) do
+            table.insert(error_display, err_line)
+          end
+        else
+          table.insert(error_display, "Exit code: " .. exit_code)
+        end
+
+        -- Also show notification for immediate feedback
+        vim.notify("Query execution failed", vim.log.levels.ERROR)
+
+        -- Display error in results window with cursor movement
+        require("enhance.results").display(error_display, connection, query_bufnr, {
+          execution_time = (vim.loop.hrtime() - start_time) / 1000000,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+          is_error = true,  -- Flag to apply error highlighting
+        })
       end
     end,
   })

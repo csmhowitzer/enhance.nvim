@@ -132,6 +132,12 @@ function M.setup_highlights()
     italic = true,
     default = true
   })
+
+  vim.api.nvim_set_hl(0, 'EnhanceError', {
+    fg = '#f38ba8',  -- Red (catppuccin mocha red)
+    bold = true,
+    default = true
+  })
 end
 
 ---Setup enhance.nvim with user configuration

@@ -231,8 +231,8 @@ enhance.nvim uses a standard database URL connection string and a name property 
 ### Workflow
 
 1. **Start**: Run `:EnhanceStart` to open workspace with explorer drawer
-2. **Connect**: Press `<CR>` on a connection in explorer to expand it
-3. **New Query**: Press `<CR>` on "New Query" or run `:EnhanceQuery`
+2. **Connect**: Press `<CR>` on a connection in explorer to test and expand it
+3. **New Query**: Press `o` on "New Query" or run `:EnhanceQuery`
 4. **Write**: Write your SQL query in the editor
 5. **Execute**: Press `<F5>` to execute (normal mode: entire buffer, visual mode: selection)
 6. **View**: Results appear in bottom window with status line
@@ -242,7 +242,8 @@ enhance.nvim uses a standard database URL connection string and a name property 
 ### Keymaps
 
 **Explorer:**
-- `<CR>` - Expand/collapse connection or open item
+- `<CR>` - Expand/collapse nodes (connections, folders, tables, buffers with results)
+- `o` - Open buffer, saved query, or create new query/script
 - `q` - Close explorer
 - `<leader>de` - Toggle explorer
 - `R` - Refresh explorer (clear cache and redraw)
@@ -404,7 +405,7 @@ require("enhance").setup({
 :EnhanceStart
 
 # 4. Expand connection in explorer (press <CR>)
-# 5. Create new query (press <CR> on "New Query")
+# 5. Create new query (press o on "New Query")
 # 6. Write query:
 SELECT * FROM users WHERE active = 1;
 

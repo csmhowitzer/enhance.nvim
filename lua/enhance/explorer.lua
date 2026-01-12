@@ -787,7 +787,7 @@ local function build_explorer_content()
 	end
 
 	table.insert(lines, "")
-	table.insert(lines, "Press <CR> to expand/select, q to close")
+	table.insert(lines, "Press <CR> to expand/collapse, o to open, q to close")
 
 	return lines
 end
@@ -2204,6 +2204,160 @@ local function create_and_execute_query(connection, query, context)
 	end)
 end
 
+---Handle 'o' key press in explorer (open/create buffer)
+---@param line_num number Current line number
+local function handle_open(line_num)
+	local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
+	local line = lines[line_num]
+
+	if not line or line == "" then
+		return
+	end
+
+	local info = parse_line(line, line_num)
+	if not info then
+		return
+	end
+
+	local connections = require("enhance.connections")
+
+	if info.type == "new_query" then
+		-- Create new empty query buffer
+		M.new_query()
+	elseif info.type == "buffer_item" then
+		-- Open buffer (regardless of whether it has results)
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local buffers = get_buffers_for_connection(conn.name)
+			for _, buf_info in ipairs(buffers) do
+				local display_name = get_buffer_display_name(buf_info.filepath)
+				if display_name == info.buffer_name then
+					-- Switch to query editor window
+					if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
+						vim.api.nvim_set_current_win(query_editor_win)
+
+						-- If buffer exists, switch to it; otherwise open the file
+						if buf_info.bufnr ~= -1 and vim.api.nvim_buf_is_valid(buf_info.bufnr) then
+							vim.api.nvim_win_set_buf(query_editor_win, buf_info.bufnr)
+						else
+							-- Open the file
+							vim.cmd("edit " .. vim.fn.fnameescape(buf_info.filepath))
+							local new_buf = vim.api.nvim_get_current_buf()
+
+							-- Set connection on buffer
+							vim.b[new_buf].enhance_connection = conn
+
+							-- Set up keymaps
+							require("enhance.query").setup_keymaps(new_buf)
+
+							-- Track this buffer
+							add_buffer_to_tracking(conn.name, new_buf, buf_info.filepath)
+						end
+					end
+					break
+				end
+			end
+		end
+	elseif info.type == "result_item" then
+		-- Display the result buffer in results window
+		-- Find the parent buffer by looking at the line above
+		local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
+		local parent_line = lines[info.line_num - 1]
+		if parent_line then
+			local parent_info = parse_line(parent_line, info.line_num - 1)
+			if parent_info and parent_info.type == "buffer_item" then
+				-- Get the buffer info
+				local conn = connections.get_connection(info.conn_name)
+				if conn then
+					local buffers = get_buffers_for_connection(conn.name)
+					for _, buf_info in ipairs(buffers) do
+						local display_name = get_buffer_display_name(buf_info.filepath)
+						if display_name == parent_info.buffer_name then
+							-- Get the result buffer
+							local result_bufnr = get_result_buffer_info(buf_info.bufnr)
+							if result_bufnr and vim.api.nvim_buf_is_valid(result_bufnr) then
+								-- Open or reuse results window
+								M.open_results()
+
+								-- Display the result buffer
+								if results_win and vim.api.nvim_win_is_valid(results_win) then
+									vim.api.nvim_win_set_buf(results_win, result_bufnr)
+									-- Move cursor to results window
+									vim.api.nvim_set_current_win(results_win)
+								end
+							end
+							break
+						end
+					end
+				end
+			end
+		end
+	elseif info.type == "saved_query_item" then
+		-- Open saved query
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local queries = get_saved_queries_for_connection(conn.name)
+			for _, query_info in ipairs(queries) do
+				local display_name = get_buffer_display_name(query_info.filepath)
+				if display_name == info.query_name then
+					-- Switch to query editor window
+					if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
+						vim.api.nvim_set_current_win(query_editor_win)
+
+						-- If buffer exists, switch to it; otherwise open the file
+						if query_info.bufnr ~= -1 and vim.api.nvim_buf_is_valid(query_info.bufnr) then
+							vim.api.nvim_win_set_buf(query_editor_win, query_info.bufnr)
+						else
+							-- Open the file
+							vim.cmd("edit " .. vim.fn.fnameescape(query_info.filepath))
+							local new_buf = vim.api.nvim_get_current_buf()
+
+							-- Set connection on buffer
+							vim.b[new_buf].enhance_connection = conn
+
+							-- Set up keymaps
+							require("enhance.query").setup_keymaps(new_buf)
+						end
+					end
+					break
+				end
+			end
+		end
+	elseif
+		info.type == "table_columns"
+		or info.type == "table_list"
+		or info.type == "table_pks"
+		or info.type == "table_fks"
+		or info.type == "table_indexes"
+	then
+		-- Generate metadata query in new buffer (no auto-execution)
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local query = generate_metadata_query(conn, info.table_name, info.type)
+			if query then
+				-- Create new buffer with query (user must manually execute with <F5>)
+				local context = string.format("%s-%s", info.table_name, info.type:lower())
+				create_script_buffer(conn, query, context)
+			end
+		end
+	elseif
+		info.type == "table_create"
+		or info.type == "table_update"
+		or info.type == "table_drop"
+		or info.type == "table_delete_records"
+	then
+		-- Generate script (no auto-execution)
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local script = generate_table_script(conn, info.table_name, info.type)
+			if script then
+				local context = string.format("%s-%s", info.table_name, info.type:lower())
+				create_script_buffer(conn, script, context)
+			end
+		end
+	end
+end
+
 ---Handle Enter key press in explorer
 ---@param line_num number Current line number
 local function handle_enter(line_num)
@@ -2290,9 +2444,6 @@ local function handle_enter(line_num)
 
 		-- Refresh to show checkmark and expanded tree
 		refresh_explorer()
-	elseif info.type == "new_query" then
-		-- Create new empty query buffer
-		M.new_query()
 	elseif info.type == "buffers" then
 		-- Toggle buffers folder expansion
 		local conn = connections.get_connection(info.conn_name)
@@ -2302,7 +2453,7 @@ local function handle_enter(line_num)
 			refresh_explorer()
 		end
 	elseif info.type == "buffer_item" then
-		-- Check if buffer has results - if so, toggle expansion; otherwise open buffer
+		-- Toggle buffer expansion if it has results
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
 			local buffers = get_buffers_for_connection(conn.name)
@@ -2318,93 +2469,6 @@ local function handle_enter(line_num)
 						local key = "conn:" .. conn.name .. ":buffer:" .. display_name
 						expanded[key] = not expanded[key]
 						refresh_explorer()
-					else
-						-- No results - open the buffer
-						-- Switch to query editor window
-						if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
-							vim.api.nvim_set_current_win(query_editor_win)
-
-							-- If buffer exists, switch to it; otherwise open the file
-							if buf_info.bufnr ~= -1 and vim.api.nvim_buf_is_valid(buf_info.bufnr) then
-								vim.api.nvim_win_set_buf(query_editor_win, buf_info.bufnr)
-							else
-								-- Open the file
-								vim.cmd("edit " .. vim.fn.fnameescape(buf_info.filepath))
-								local new_buf = vim.api.nvim_get_current_buf()
-
-								-- Set connection on buffer
-								vim.b[new_buf].enhance_connection = conn
-
-								-- Set up keymaps
-								require("enhance.query").setup_keymaps(new_buf)
-
-								-- Track this buffer
-								add_buffer_to_tracking(conn.name, new_buf, buf_info.filepath)
-							end
-						end
-					end
-					break
-				end
-			end
-		end
-	elseif info.type == "result_item" then
-		-- Display the result buffer in results window
-		-- Find the parent buffer by looking at the line above
-		local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
-		local parent_line = lines[info.line_num - 1]
-		if parent_line then
-			local parent_info = parse_line(parent_line, info.line_num - 1)
-			if parent_info and parent_info.type == "buffer_item" then
-				-- Get the buffer info
-				local conn = connections.get_connection(info.conn_name)
-				if conn then
-					local buffers = get_buffers_for_connection(conn.name)
-					for _, buf_info in ipairs(buffers) do
-						local display_name = get_buffer_display_name(buf_info.filepath)
-						if display_name == parent_info.buffer_name then
-							-- Get the result buffer
-							local result_bufnr = get_result_buffer_info(buf_info.bufnr)
-							if result_bufnr and vim.api.nvim_buf_is_valid(result_bufnr) then
-								-- Open or reuse results window
-								M.open_results()
-
-								-- Display the result buffer
-								if results_win and vim.api.nvim_win_is_valid(results_win) then
-									vim.api.nvim_win_set_buf(results_win, result_bufnr)
-								end
-							end
-							break
-						end
-					end
-				end
-			end
-		end
-	elseif info.type == "saved_query_item" then
-		-- Open saved query
-		local conn = connections.get_connection(info.conn_name)
-		if conn then
-			local queries = get_saved_queries_for_connection(conn.name)
-			for _, query_info in ipairs(queries) do
-				local display_name = get_buffer_display_name(query_info.filepath)
-				if display_name == info.query_name then
-					-- Switch to query editor window
-					if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
-						vim.api.nvim_set_current_win(query_editor_win)
-
-						-- If buffer exists, switch to it; otherwise open the file
-						if query_info.bufnr ~= -1 and vim.api.nvim_buf_is_valid(query_info.bufnr) then
-							vim.api.nvim_win_set_buf(query_editor_win, query_info.bufnr)
-						else
-							-- Open the file
-							vim.cmd("edit " .. vim.fn.fnameescape(query_info.filepath))
-							local new_buf = vim.api.nvim_get_current_buf()
-
-							-- Set connection on buffer
-							vim.b[new_buf].enhance_connection = conn
-
-							-- Set up keymaps
-							require("enhance.query").setup_keymaps(new_buf)
-						end
 					end
 					break
 				end
@@ -2425,38 +2489,6 @@ local function handle_enter(line_num)
 			local key = "conn:" .. conn.name .. ":table:" .. info.table_name
 			expanded[key] = not expanded[key]
 			refresh_explorer()
-		end
-	elseif
-		info.type == "table_columns"
-		or info.type == "table_list"
-		or info.type == "table_pks"
-		or info.type == "table_fks"
-		or info.type == "table_indexes"
-	then
-		-- Generate metadata query in new buffer (no auto-execution)
-		local conn = connections.get_connection(info.conn_name)
-		if conn then
-			local query = generate_metadata_query(conn, info.table_name, info.type)
-			if query then
-				-- Create new buffer with query (user must manually execute with <F5>)
-				local context = string.format("%s-%s", info.table_name, info.type:lower())
-				create_script_buffer(conn, query, context)
-			end
-		end
-	elseif
-		info.type == "table_create"
-		or info.type == "table_update"
-		or info.type == "table_drop"
-		or info.type == "table_delete_records"
-	then
-		-- Generate script (no auto-execution)
-		local conn = connections.get_connection(info.conn_name)
-		if conn then
-			local script = generate_table_script(conn, info.table_name, info.type)
-			if script then
-				local context = string.format("%s-%s", info.table_name, info.type:lower())
-				create_script_buffer(conn, script, context)
-			end
 		end
 	end
 end
@@ -2589,7 +2621,11 @@ function M.start()
 		-- Set up keymaps
 		vim.keymap.set("n", "<CR>", function()
 			handle_enter(vim.fn.line("."))
-		end, { buffer = explorer_buf, desc = "Expand/Connect" })
+		end, { buffer = explorer_buf, desc = "Expand/Collapse" })
+
+		vim.keymap.set("n", "o", function()
+			handle_open(vim.fn.line("."))
+		end, { buffer = explorer_buf, desc = "Open buffer/query" })
 
 		vim.keymap.set("n", "<leader>de", function()
 			M.toggle()
@@ -3196,6 +3232,8 @@ M._denormalize_name = denormalize_name
 M._is_arrow = is_arrow
 M._is_status = is_status
 M._is_metadata = is_metadata
+M._handle_enter = handle_enter
+M._handle_open = handle_open
 
 -- Test helpers
 M._set_explorer_buf = function(bufnr)

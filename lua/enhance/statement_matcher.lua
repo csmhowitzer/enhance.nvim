@@ -65,8 +65,9 @@ function M.match_statements(statements, parsed_output, metadata)
         executed_on = metadata.timestamp,
       }
 
-      -- SELECT gets result_table (if not already consumed)
-      if stmt.type == "SELECT" and not result_consumed then
+      -- SELECT and other query statements (PRAGMA, SHOW, etc.) get result_table (if not already consumed)
+      -- Any statement that produces tabular output should be treated like SELECT
+      if (stmt.type == "SELECT" or stmt.type == "UNKNOWN") and not result_consumed then
         result.result_table = {
           headers = parsed_output.headers,
           rows = parsed_output.rows,
@@ -104,8 +105,8 @@ function M.match_statements(statements, parsed_output, metadata)
       executed_on = metadata.timestamp,
     }
     
-    -- SELECT gets next result set
-    if stmt.type == "SELECT" then
+    -- SELECT and other query statements (PRAGMA, SHOW, etc.) get next result set
+    if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
       if result_set_index <= #parsed_output.result_sets then
         local result_set = parsed_output.result_sets[result_set_index]
         result.result_table = {

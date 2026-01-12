@@ -323,6 +323,8 @@ function M.display(lines, connection, query_bufnr, metadata)
   if results_win and vim.api.nvim_win_is_valid(results_win) then
     -- Reuse existing results window - just switch buffer
     vim.api.nvim_win_set_buf(results_win, buf)
+    -- Move cursor to results window (ensures cursor moves on every execution)
+    vim.api.nvim_set_current_win(results_win)
   else
     -- Create new results window (bottom split from query editor)
     -- Open in configured position
@@ -407,6 +409,13 @@ function M.display(lines, connection, query_bufnr, metadata)
     vim.api.nvim_buf_set_var(buf, 'enhance_json_columns', json_columns)
   end
 
+  -- Apply error highlighting if this is an error display
+  if metadata and metadata.is_error then
+    vim.schedule(function()
+      M.apply_error_highlighting(buf, config)
+    end)
+  end
+
   -- Apply NULL highlighting to result cells
   vim.schedule(function()
     M.apply_null_highlighting(buf, config)
@@ -448,6 +457,8 @@ function M.display_message(lines)
   if results_win and vim.api.nvim_win_is_valid(results_win) then
     -- Reuse existing results window - just switch buffer
     vim.api.nvim_win_set_buf(results_win, buf)
+    -- Move cursor to results window (ensures cursor moves on every message display)
+    vim.api.nvim_set_current_win(results_win)
   else
     -- Create new results window (bottom split from query editor)
     vim.cmd('split')
@@ -557,6 +568,39 @@ function M._line_number()
 
   -- Return with highlight: %#HighlightGroup#text
   return string.format("%%#%s#%4d ", hl_group, row_num)
+end
+
+---Apply error highlighting to error messages
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+function M.apply_error_highlighting(bufnr, config)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  -- Create namespace for error highlights
+  local ns_id = vim.api.nvim_create_namespace('enhance_error_highlight')
+
+  -- Get all lines in buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Determine data start line based on status line position
+  local data_start_line = 0
+  if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
+    data_start_line = 2  -- Skip status line (2 lines)
+  end
+
+  -- Highlight all error lines (everything after status line)
+  for line_num = data_start_line, #lines - 1 do
+    vim.api.nvim_buf_add_highlight(
+      bufnr,
+      ns_id,
+      'EnhanceError',
+      line_num,
+      0,
+      -1
+    )
+  end
 end
 
 ---Apply NULL highlighting to result buffer

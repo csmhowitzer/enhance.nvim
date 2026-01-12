@@ -496,12 +496,11 @@ end
 ---Save query buffer from results buffer (called via :w abbreviation)
 function M._save_query_from_results()
   local explorer = require('enhance.explorer')
-  local result_bufnr = vim.api.nvim_get_current_buf()
 
-  -- Find associated query buffer
-  local query_bufnr = explorer.get_query_buffer_for_result(result_bufnr)
+  -- Get the currently visible editor buffer (not the associated query buffer)
+  local query_bufnr = explorer.get_current_editor_buffer()
   if not query_bufnr or not vim.api.nvim_buf_is_valid(query_bufnr) then
-    vim.notify("No associated query buffer found", vim.log.levels.WARN)
+    vim.notify("No query buffer visible in editor", vim.log.levels.WARN)
     return
   end
 
@@ -525,7 +524,7 @@ function M._save_query_from_results()
   else
     -- It's already a saved query, write it properly to update buffer state
     vim.api.nvim_buf_call(query_bufnr, function()
-      vim.cmd('write')
+      vim.cmd('write!')  -- Use write! to force overwrite
     end)
     local filename = vim.fn.fnamemodify(query_filepath, ":t")
     vim.notify("Saved query: " .. filename, vim.log.levels.INFO)

@@ -344,6 +344,7 @@ vim.api.nvim_set_hl(0, 'EnhanceLineNumber', { fg = '#6c7086' })       -- Gray
 vim.api.nvim_set_hl(0, 'EnhanceLineNumberAccent', { fg = '#89b4fa' }) -- Light blue (every 5th line)
 vim.api.nvim_set_hl(0, 'EnhanceCursorLine', { bg = '#2a2b3c' })       -- Subtle background
 vim.api.nvim_set_hl(0, 'EnhanceCursorLineAccent', { bg = '#3f3144' }) -- Purple-tinted (every 5th line)
+vim.api.nvim_set_hl(0, 'EnhanceError', { fg = '#f38ba8', bold = true }) -- Red (error messages)
 ```
 
 **Customize in your config:**

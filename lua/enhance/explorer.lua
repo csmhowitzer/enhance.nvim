@@ -2505,21 +2505,29 @@ function M.start()
 	explorer_tab = vim.api.nvim_get_current_tabpage()
 	workspace_initialized = true
 
+	-- Flag to track if we're doing an auto-save (to prevent triggering BufWriteCmd)
+	local is_auto_saving = false
+
 	-- Helper function to auto-save a tmp buffer
 	local function auto_save_tmp_buffer(bufnr)
 		-- Only save if buffer is modified and valid
 		if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].modified then
 			local filepath = vim.api.nvim_buf_get_name(bufnr)
 			if filepath and filepath ~= "" and is_tmp_file(filepath) then
-				-- Get buffer content
-				local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-				-- Write to file silently
-				local ok, err = pcall(vim.fn.writefile, lines, filepath)
-				if ok then
-					-- Mark buffer as unmodified
-					vim.bo[bufnr].modified = false
-				else
-					vim.notify(string.format("Failed to auto-save tmp buffer: %s", err), vim.log.levels.WARN)
+				-- Set flag to indicate auto-save in progress
+				is_auto_saving = true
+
+				-- Use vim.api.nvim_buf_call to write in buffer context
+				-- This properly updates buffer state and prevents "file changed" warnings
+				local ok = pcall(vim.api.nvim_buf_call, bufnr, function()
+					vim.cmd('silent! write!')  -- Use write! to force overwrite
+				end)
+
+				-- Clear flag
+				is_auto_saving = false
+
+				if not ok then
+					vim.notify(string.format("Failed to auto-save tmp buffer: %s", filepath), vim.log.levels.WARN)
 				end
 			end
 		end
@@ -2586,11 +2594,36 @@ function M.start()
 	-- Expose function for testing
 	M._save_all_tmp_buffers = save_all_tmp_buffers
 
+	-- Configure tmp buffers to prevent prompts and warnings
+	vim.api.nvim_create_autocmd("BufEnter", {
+		pattern = "*/enhance.nvim/*/tmp/*.sql",
+		callback = function()
+			vim.opt_local.confirm = false  -- Disable overwrite confirmation prompts
+			vim.opt_local.autoread = true  -- Auto-reload if file changes (prevents W13 warnings)
+		end,
+		desc = "Configure enhance.nvim tmp buffers to prevent prompts",
+	})
+
+	-- Configure saved query buffers to show save confirmation on :qa
+	vim.api.nvim_create_autocmd("BufEnter", {
+		pattern = "*/enhance.nvim/*/queries/*.sql",
+		callback = function()
+			vim.opt_local.confirm = true  -- Show "Save changes?" dialog on :qa
+		end,
+		desc = "Configure enhance.nvim saved queries to prompt on quit",
+	})
+
 	-- Set up autocmd to handle manual saving tmp buffers (prompts to save to queries/)
+	-- Use BufWriteCmd to completely override the write behavior
 	vim.api.nvim_create_autocmd("BufWriteCmd", {
 		pattern = "*/enhance.nvim/*/tmp/*.sql",
 		callback = function(args)
-			return handle_tmp_buffer_save(args.buf)
+			-- Skip if this is an auto-save (let it proceed normally)
+			if is_auto_saving then
+				return false  -- Allow default write behavior
+			end
+			-- Manual save: show prompt to save to queries/
+			handle_tmp_buffer_save(args.buf)
 		end,
 		desc = "Handle manual save of enhance.nvim tmp buffers to queries directory",
 	})
@@ -2958,6 +2991,12 @@ function M.new_query()
 	vim.cmd("edit " .. vim.fn.fnameescape(filename))
 	local buf = vim.api.nvim_get_current_buf()
 
+	-- Set buffer options for tmp files
+	vim.bo[buf].swapfile = false  -- No swap files for tmp buffers
+	vim.bo[buf].autoread = true   -- Auto-reload if file changes on disk (prevents warnings)
+	-- Mark as a tmp buffer so we can identify it later
+	vim.b[buf].enhance_is_tmp = true
+
 	-- Associate with active connection
 	vim.b[buf].enhance_connection = active_connection
 
@@ -3245,6 +3284,15 @@ M._set_active_connection = function(conn)
 end
 
 -- Expose for results module
+---Get the currently visible buffer in the query editor window
+---@return number? bufnr Buffer number or nil
+function M.get_current_editor_buffer()
+	if not query_editor_win or not vim.api.nvim_win_is_valid(query_editor_win) then
+		return nil
+	end
+	return vim.api.nvim_win_get_buf(query_editor_win)
+end
+
 M.associate_result_buffer = associate_result_buffer
 M.get_result_buffer_info = get_result_buffer_info
 M.get_query_buffer_for_result = get_query_buffer_for_result

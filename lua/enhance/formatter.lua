@@ -137,10 +137,15 @@ local function generate_separator(widths, config)
 end
 
 ---Format parsed result into table lines
----@param parsed_result table Parsed result from parser {headers, rows, metadata}
+---@param parsed_result table Parsed result from parser {headers, rows, metadata} or {multiple_results, result_sets, metadata}
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
 function M.format(parsed_result, user_config)
+  -- Check if we have multiple result sets
+  if parsed_result.multiple_results and parsed_result.result_sets then
+    return M.format_multiple_result_sets(parsed_result.result_sets, user_config)
+  end
+
   -- Merge config
   local config = vim.tbl_deep_extend("force", default_config, user_config or {})
 
@@ -169,6 +174,47 @@ function M.format(parsed_result, user_config)
   end
 
   return lines
+end
+
+---Format multiple result sets (from multiple SELECT statements)
+---@param result_sets table[] Array of result sets, each with {headers, rows, metadata}
+---@param user_config FormatterConfig? User configuration overrides
+---@return string[] Formatted lines
+function M.format_multiple_result_sets(result_sets, user_config)
+  local config = vim.tbl_deep_extend("force", default_config, user_config or {})
+  local all_lines = {}
+
+  for i, result_set in ipairs(result_sets) do
+    -- Add "Result Set X/Y" header
+    if i > 1 then
+      table.insert(all_lines, "") -- Blank line between result sets
+    end
+    table.insert(all_lines, string.format("Result Set %d/%d", i, #result_sets))
+    table.insert(all_lines, "") -- Blank line after header
+
+    -- Format this result set
+    local headers = result_set.headers or {}
+    local rows = result_set.rows or {}
+
+    if #headers > 0 then
+      local widths = calculate_column_widths(headers, rows, config)
+
+      -- Format header
+      table.insert(all_lines, format_row(headers, widths, config))
+
+      -- Add separator
+      table.insert(all_lines, generate_separator(widths, config))
+
+      -- Format data rows
+      for _, row in ipairs(rows) do
+        table.insert(all_lines, format_row(row, widths, config))
+      end
+    else
+      table.insert(all_lines, "No results")
+    end
+  end
+
+  return all_lines
 end
 
 ---Format a single statement result

@@ -19,22 +19,34 @@ local function normalize_headers(headers)
   return normalized
 end
 
----Parse SQL Server (sqlcmd) output
----Format: COLUMN|DATA|TYPE with pipe separators
+---Helper: Find all "(X rows affected)" markers in SQL Server output
 ---@param lines string[] Raw output lines
----@return table Parsed result {headers: string[], rows: string[][], metadata: table}
-function M.parse_sqlserver(lines)
+---@return number[] Indices of all "(X rows affected)" lines
+local function find_all_rows_affected_markers(lines)
+  local markers = {}
+  for i, line in ipairs(lines) do
+    if line:match("^%(%d+ rows? affected%)") then
+      table.insert(markers, i)
+    end
+  end
+  return markers
+end
+
+---Helper: Parse a single SQL Server result set (space-separated format)
+---@param lines string[] Lines for this result set (header through last data row)
+---@return table Parsed result {headers: string[], rows: string[][]}
+local function parse_single_sqlserver_result_set(lines)
   if not lines or #lines == 0 then
-    return { headers = {}, rows = {}, metadata = {} }
+    return { headers = {}, rows = {} }
   end
 
   local headers = {}
   local rows = {}
   local separator_idx = nil
 
-  -- Find header and separator
+  -- Find separator line (all dashes and spaces)
   for i, line in ipairs(lines) do
-    if line:match("^%-+|") or line:match("^%-+$") then
+    if line:match("^%-+") and line:match("^[%-%s]+$") then
       separator_idx = i
       break
     end
@@ -43,7 +55,21 @@ function M.parse_sqlserver(lines)
   if separator_idx and separator_idx > 1 then
     -- Parse headers from line before separator
     local header_line = lines[separator_idx - 1]
-    for header in header_line:gmatch("[^|]+") do
+    local separator_line = lines[separator_idx]
+
+    -- Find column boundaries from separator line (groups of dashes)
+    local col_positions = {}
+    local start_pos = 1
+
+    for dash_group in separator_line:gmatch("%-+") do
+      local pos = separator_line:find(dash_group, start_pos, true)
+      table.insert(col_positions, {start = pos, length = #dash_group})
+      start_pos = pos + #dash_group + 1
+    end
+
+    -- Extract headers using column positions
+    for _, col in ipairs(col_positions) do
+      local header = header_line:sub(col.start, col.start + col.length - 1)
       table.insert(headers, vim.trim(header))
     end
 
@@ -54,12 +80,15 @@ function M.parse_sqlserver(lines)
     for i = separator_idx + 1, #lines do
       local line = lines[i]
       -- Stop at footer lines (rows affected, empty lines)
-      if line:match("^%(.*rows? affected%)") or line == "" then
+      if line:match("^%(%d+ rows? affected%)") or line == "" then
         break
       end
 
       local row = {}
-      for cell in line:gmatch("[^|]+") do
+
+      -- Use same column positions to extract cells
+      for _, col in ipairs(col_positions) do
+        local cell = line:sub(col.start, col.start + col.length - 1)
         table.insert(row, vim.trim(cell))
       end
 
@@ -71,7 +100,60 @@ function M.parse_sqlserver(lines)
 
   return {
     headers = headers,
-    rows = rows,
+    rows = rows
+  }
+end
+
+---Parse SQL Server (sqlcmd) output
+---Format: Space-separated fixed-width columns
+---Detects multiple result sets via "(X rows affected)" markers
+---@param lines string[] Raw output lines
+---@return table Parsed result {headers: string[], rows: string[][], metadata: table} or {multiple_results: boolean, result_sets: table[]}
+function M.parse_sqlserver(lines)
+  if not lines or #lines == 0 then
+    return { headers = {}, rows = {}, metadata = {} }
+  end
+
+  -- Find all "(X rows affected)" markers
+  local markers = find_all_rows_affected_markers(lines)
+
+  -- If we have multiple markers, we have multiple result sets
+  if #markers > 1 then
+    local result_sets = {}
+    local start_idx = 1
+
+    for _, marker_idx in ipairs(markers) do
+      -- Extract lines for this result set (from start to marker)
+      local result_set_lines = vim.list_slice(lines, start_idx, marker_idx - 1)
+
+      -- Parse this result set
+      local parsed = parse_single_sqlserver_result_set(result_set_lines)
+
+      -- Only include result sets that have data
+      if #parsed.headers > 0 or #parsed.rows > 0 then
+        table.insert(result_sets, {
+          headers = parsed.headers,
+          rows = parsed.rows,
+          metadata = { db_type = "sqlserver" }
+        })
+      end
+
+      -- Next result set starts after this marker
+      start_idx = marker_idx + 1
+    end
+
+    return {
+      multiple_results = true,
+      result_sets = result_sets,
+      metadata = { db_type = "sqlserver" }
+    }
+  end
+
+  -- Single result set - use existing logic
+  local parsed = parse_single_sqlserver_result_set(lines)
+  return {
+    headers = parsed.headers,
+    rows = parsed.rows,
     metadata = { db_type = "sqlserver" }
   }
 end
@@ -413,6 +495,8 @@ end
 M._normalize_headers = normalize_headers
 M._find_all_separators = find_all_separators
 M._parse_single_result_set = parse_single_result_set
+M._find_all_rows_affected_markers = find_all_rows_affected_markers
+M._parse_single_sqlserver_result_set = parse_single_sqlserver_result_set
 M._parse_sqlserver = M.parse_sqlserver
 M._parse_sqlite = M.parse_sqlite
 M._parse_mysql = M.parse_mysql

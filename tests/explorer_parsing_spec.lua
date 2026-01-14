@@ -118,26 +118,6 @@ describe("enhance.explorer parsing", function()
       assert.equals("SQLite Test", info.conn_name) -- Denormalized
     end)
   end)
-  
-  describe("parse_line - child nodes", function()
-    it("should parse Buffers node with counter", function()
-      -- NOTE: This test requires full explorer buffer context with parent connection
-      -- Skipping for now - will be tested in integration tests
-      pending("Requires full explorer buffer context with parent connection")
-    end)
-
-    it("should parse Tables node", function()
-      -- NOTE: This test requires full explorer buffer context with parent connection
-      -- Skipping for now - will be tested in integration tests
-      pending("Requires full explorer buffer context with parent connection")
-    end)
-
-    it("should parse New Query node", function()
-      -- NOTE: This test requires full explorer buffer context with parent connection
-      -- Skipping for now - will be tested in integration tests
-      pending("Requires full explorer buffer context with parent connection")
-    end)
-  end)
 
   describe("indentation consistency regression test", function()
     -- Regression test for bug where buffers with results had 6 spaces indent

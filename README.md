@@ -39,6 +39,23 @@ enhance.nvim uses database CLI tools for query execution. Install the tools for 
 
 Run `:checkhealth enhance` to verify CLI tools and *vim-dadbod* are installed
 
+### Docker Connections
+
+When connecting to databases running in Docker containers, note the following:
+
+**MySQL:** Use `127.0.0.1` instead of `localhost` to avoid socket errors:
+
+```json
+{
+  "name": "Docker MySQL",
+  "url": "mysql://root:root@127.0.0.1:3306/example_mysql"
+}
+```
+
+**Why:** The MySQL client uses Unix sockets when connecting to `localhost`, but Docker containers don't expose socket files on the host system. Using `127.0.0.1` forces a TCP connection.
+
+**All databases:** Ensure CLI tools are installed on your host system (see table above). enhance.nvim runs database commands from the host, not inside containers, so the CLI tools must be available in your system PATH.
+
 ## Installation
 
 ### With lazy.nvim

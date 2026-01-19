@@ -217,9 +217,9 @@ function M.detect_statements(query)
   if not query or query == "" then
     return {}
   end
-  
+
   local statement_texts = {}
-  
+
   -- Try semicolon-first approach
   if query:find(";") then
     statement_texts = split_by_semicolon(query)
@@ -227,7 +227,7 @@ function M.detect_statements(query)
     -- Fallback to keyword detection (SQL Server style)
     statement_texts = split_by_keywords(query)
   end
-  
+
   -- Build statement objects with types
   local statements = {}
   for _, text in ipairs(statement_texts) do
@@ -236,8 +236,43 @@ function M.detect_statements(query)
       text = text,
     })
   end
-  
+
   return statements
+end
+
+---Check if statements contain a transaction block
+---@param statements table[] Array of statement objects
+---@return boolean True if transaction block detected
+function M.contains_transaction_block(statements)
+  if not statements or #statements == 0 then
+    return false
+  end
+
+  local has_begin = false
+  local has_end = false
+
+  for _, stmt in ipairs(statements) do
+    local upper = stmt.text:upper()
+    local trimmed = vim.trim(upper)
+
+    -- Check for transaction start
+    if trimmed:match("^BEGIN") or
+       trimmed:match("^START%s+TRANSACTION") or
+       trimmed:match("^BEGIN%s+TRANSACTION") then
+      has_begin = true
+    end
+
+    -- Check for transaction end
+    if trimmed:match("^COMMIT") or
+       trimmed:match("^ROLLBACK") or
+       trimmed:match("^END%s+TRANSACTION") or
+       trimmed:match("^END$") then
+      has_end = true
+    end
+  end
+
+  -- Transaction block if we have both begin and end
+  return has_begin and has_end
 end
 
 -- Expose internal functions for testing
@@ -247,6 +282,7 @@ M._is_inside_comment = is_inside_comment
 M._remove_comments = remove_comments
 M._split_by_semicolon = split_by_semicolon
 M._split_by_keywords = split_by_keywords
+M._contains_transaction_block = M.contains_transaction_block
 
 return M
 

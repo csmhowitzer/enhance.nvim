@@ -234,5 +234,88 @@ SELECT * FROM Products
       end)
     end)
   end)
+
+  describe("contains_transaction_block", function()
+    it("should detect BEGIN and COMMIT", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "COMMIT" },
+      }
+
+      assert.is_true(detector.contains_transaction_block(statements))
+    end)
+
+    it("should detect BEGIN TRANSACTION and COMMIT", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN TRANSACTION" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "COMMIT" },
+      }
+
+      assert.is_true(detector.contains_transaction_block(statements))
+    end)
+
+    it("should detect START TRANSACTION and COMMIT", function()
+      local statements = {
+        { type = "UNKNOWN", text = "START TRANSACTION" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "COMMIT" },
+      }
+
+      assert.is_true(detector.contains_transaction_block(statements))
+    end)
+
+    it("should detect BEGIN and ROLLBACK", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "ROLLBACK" },
+      }
+
+      assert.is_true(detector.contains_transaction_block(statements))
+    end)
+
+    it("should return false for BEGIN without COMMIT", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+      }
+
+      assert.is_false(detector.contains_transaction_block(statements))
+    end)
+
+    it("should return false for COMMIT without BEGIN", function()
+      local statements = {
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "COMMIT" },
+      }
+
+      assert.is_false(detector.contains_transaction_block(statements))
+    end)
+
+    it("should return false for regular statements", function()
+      local statements = {
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UPDATE", text = "UPDATE users SET status='inactive'" },
+      }
+
+      assert.is_false(detector.contains_transaction_block(statements))
+    end)
+
+    it("should return false for empty statements", function()
+      assert.is_false(detector.contains_transaction_block({}))
+    end)
+
+    it("should handle case insensitivity", function()
+      local statements = {
+        { type = "UNKNOWN", text = "begin" },
+        { type = "UPDATE", text = "UPDATE users SET status='active'" },
+        { type = "UNKNOWN", text = "commit" },
+      }
+
+      assert.is_true(detector.contains_transaction_block(statements))
+    end)
+  end)
 end)
 

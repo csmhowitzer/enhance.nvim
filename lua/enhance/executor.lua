@@ -15,12 +15,12 @@ local function count_rows(output_lines, db_type)
 
   -- Try to parse "rows affected" message first (INSERT/UPDATE/DELETE)
   if normalized_type == "sqlserver" or normalized_type == "mssql" then
-    for i = #output_lines, 1, -1 do
-      local line = output_lines[i]
+    -- Count total rows from all "(X rows affected)" markers
+    -- DO NOT remove these lines - parser needs them to detect multiple result sets
+    for _, line in ipairs(output_lines) do
       local count = line:match("%((%d+) rows? affected%)")
       if count then
-        row_count = tonumber(count)
-        table.remove(output_lines, i)  -- Remove the footer line
+        row_count = row_count + tonumber(count)
       end
     end
     if row_count > 0 then
@@ -479,6 +479,8 @@ function M.execute_sqlserver(connection, query, query_bufnr)
   table.insert(cmd, '-s')
   table.insert(cmd, '|') -- Column separator
   table.insert(cmd, '-W') -- Remove trailing spaces
+  table.insert(cmd, '-y')
+  table.insert(cmd, '8000') -- Max variable-type column width (for NVARCHAR/VARCHAR)
   table.insert(cmd, '-Q')
   table.insert(cmd, query)
 
@@ -519,14 +521,42 @@ function M.execute_sqlserver(connection, query, query_bufnr)
           connection_name = connection.name,
         }
 
+        -- Detect SQL statements in the query
+        local statement_detector = require("enhance.statement_detector")
+        local detected_statements = statement_detector.detect_statements(query)
+
         -- Parse and format results for consistent display (if enabled)
         local config = require("enhance.config")
         local formatted_lines = output_lines
+        local parsed_result = nil
         if config.get("format_results") then
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
-          local parsed = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed)
+
+          -- Phase 2: Parse output (supports multiple result sets)
+          parsed_result = parser.parse(output_lines, connection.type)
+
+          -- Phase 3 & 4: Match statements to output and format
+          if #detected_statements > 0 then
+            local statement_matcher = require("enhance.statement_matcher")
+            local matched_results = statement_matcher.match_statements(
+              detected_statements,
+              parsed_result,
+              metadata
+            )
+            local total_table_rows
+            formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
+
+            -- Update metadata for multiple statements
+            metadata.statement_count = #detected_statements
+            metadata.total_table_rows = total_table_rows
+          else
+            -- Fallback to old format for backward compatibility
+            formatted_lines = formatter.format(parsed_result)
+          end
+
+          -- Add parsed result to metadata for JSON detection
+          metadata.parsed_result = parsed_result
         end
 
         -- Display results with metadata (no footer added here)

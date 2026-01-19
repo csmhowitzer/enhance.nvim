@@ -10,15 +10,15 @@ function M.is_json(str)
   if not str or type(str) ~= "string" then
     return false
   end
-  
+
   -- Trim whitespace
   str = vim.trim(str)
-  
+
   -- Quick pattern check - must start/end with {} or []
   if not (str:match("^%s*{.*}%s*$") or str:match("^%s*%[.*%]%s*$")) then
     return false
   end
-  
+
   -- Try to parse with vim.json.decode
   local ok, _ = pcall(vim.json.decode, str)
   return ok

@@ -31,15 +31,15 @@ function M.detect_json_columns(headers, rows, sample_size)
     local has_json = false
     local has_non_null = false
     local all_sampled_are_json = true
-    
+
     -- Sample first N rows for this column
     for row_idx = 1, rows_to_check do
       local cell = rows[row_idx][col_idx]
-      
+
       -- Skip NULL/empty cells (they don't disqualify a column from being JSON)
       if cell and cell ~= "" then
         has_non_null = true
-        
+
         -- Check if this cell contains valid JSON
         if json_utils.is_json(cell) then
           has_json = true
@@ -50,7 +50,7 @@ function M.detect_json_columns(headers, rows, sample_size)
         end
       end
     end
-    
+
     -- Column is JSON if:
     -- 1. We found at least one JSON value
     -- 2. All non-NULL sampled values were valid JSON

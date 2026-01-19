@@ -770,11 +770,14 @@ function M._highlight_json_cells(bufnr, ns_id, lines, json_columns, start_line, 
         end
       end
 
-      -- Add the last cell after the final pipe
+      -- Add the last cell after the final pipe (if any)
       if current_pos <= #line then
         local last_cell = line:sub(current_pos)
         table.insert(cells, last_cell)
-        table.insert(cell_positions, { start = current_pos, finish = #line })
+        -- Find the trailing pipe position (if exists) to exclude it from highlighting
+        local trailing_pipe_pos = line:find("|%s*$")
+        local cell_end = trailing_pipe_pos and (trailing_pipe_pos - 1) or #line
+        table.insert(cell_positions, { start = current_pos, finish = cell_end })
       end
 
       -- Apply highlighting to JSON columns

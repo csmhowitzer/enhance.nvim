@@ -32,7 +32,7 @@ local function find_all_rows_affected_markers(lines)
   return markers
 end
 
----Helper: Parse a single SQL Server result set (space-separated format)
+---Helper: Parse a single SQL Server result set (auto-detects pipe or space-separated format)
 ---@param lines string[] Lines for this result set (header through last data row)
 ---@return table Parsed result {headers: string[], rows: string[][]}
 local function parse_single_sqlserver_result_set(lines)
@@ -44,19 +44,54 @@ local function parse_single_sqlserver_result_set(lines)
   local rows = {}
   local separator_idx = nil
 
-  -- Find separator line (all dashes and spaces)
+  -- Find separator line (all dashes, possibly with pipes or spaces)
   for i, line in ipairs(lines) do
-    if line:match("^%-+") and line:match("^[%-%s]+$") then
+    if line:match("^%-+") and line:match("^[%-%s|]+$") then
       separator_idx = i
       break
     end
   end
 
-  if separator_idx and separator_idx > 1 then
-    -- Parse headers from line before separator
-    local header_line = lines[separator_idx - 1]
-    local separator_line = lines[separator_idx]
+  if not separator_idx or separator_idx <= 1 then
+    return { headers = headers, rows = rows }
+  end
 
+  -- Parse headers from line before separator
+  local header_line = lines[separator_idx - 1]
+  local separator_line = lines[separator_idx]
+
+  -- Detect format: pipe-separated vs space-separated
+  local is_pipe_separated = separator_line:match("|") ~= nil
+
+  if is_pipe_separated then
+    -- PIPE-SEPARATED FORMAT (e.g., "ID|FName|LName")
+    -- Split header by pipes and trim
+    for header in header_line:gmatch("[^|]+") do
+      table.insert(headers, vim.trim(header))
+    end
+
+    -- Normalize headers (replace blank headers with default names)
+    headers = normalize_headers(headers)
+
+    -- Parse data rows (after separator, before footer)
+    for i = separator_idx + 1, #lines do
+      local line = lines[i]
+      -- Stop at footer lines (rows affected, empty lines)
+      if line:match("^%(%d+ rows? affected%)") or line == "" then
+        break
+      end
+
+      local row = {}
+      for cell in line:gmatch("[^|]+") do
+        table.insert(row, vim.trim(cell))
+      end
+
+      if #row > 0 then
+        table.insert(rows, row)
+      end
+    end
+  else
+    -- SPACE-SEPARATED FORMAT (fixed-width columns)
     -- Find column boundaries from separator line (groups of dashes)
     local col_positions = {}
     local start_pos = 1
@@ -105,7 +140,7 @@ local function parse_single_sqlserver_result_set(lines)
 end
 
 ---Parse SQL Server (sqlcmd) output
----Format: Space-separated fixed-width columns
+---Format: Auto-detects pipe-separated or space-separated fixed-width columns
 ---Detects multiple result sets via "(X rows affected)" markers
 ---@param lines string[] Raw output lines
 ---@return table Parsed result {headers: string[], rows: string[][], metadata: table} or {multiple_results: boolean, result_sets: table[]}

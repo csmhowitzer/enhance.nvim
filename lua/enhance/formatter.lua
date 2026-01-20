@@ -226,18 +226,23 @@ end
 local function format_single_statement(statement, statement_num, total_statements, user_config)
   local lines = {}
 
-  -- Add "Result Set X/Y | Rows: N" header if multiple statements
+  -- Add "Result Set X/Y | Rows: N | XXms" header if multiple statements
   if total_statements > 1 then
-    -- Format: "Result Set X/Y" padded to 15 chars, then " | Rows: N"
+    -- Format: "Result Set X/Y" padded to 15 chars, then " | Rows: N" and/or " | XXms"
     -- This aligns the first pipe with the global status line
     local result_set_label = string.format("Result Set %d/%d", statement_num, total_statements)
     local padded_label = result_set_label .. string.rep(" ", math.max(0, 15 - #result_set_label))
 
     local header = padded_label
 
-    -- Add row count to header if this is a table result
+    -- Add row count to header if this is a table result (BEFORE elapsed time)
     if statement.result_table and statement.rows then
       header = header .. string.format("| Rows: %d", statement.rows)
+    end
+
+    -- Add elapsed time if available (de-batched statements only) (AFTER rows)
+    if statement.elapsed and statement.elapsed > 0 then
+      header = header .. string.format(" | %.2fms", statement.elapsed)
     end
 
     table.insert(lines, header)

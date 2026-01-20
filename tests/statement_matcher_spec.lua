@@ -304,5 +304,76 @@ describe("statement_matcher", function()
       end)
     end)
   end)
+
+  describe("transaction control statements", function()
+    it("should filter out BEGIN and COMMIT statements", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN TRANSACTION" },
+        { type = "UPDATE", text = "UPDATE users SET status='active' WHERE id=1" },
+        { type = "UPDATE", text = "UPDATE users SET status='inactive' WHERE id=2" },
+        { type = "UNKNOWN", text = "COMMIT" },
+      }
+
+      local parsed_output = {
+        headers = {},
+        rows = {},
+      }
+
+      local metadata = {
+        execution_time = 50,
+        row_count = 2,
+        db_type = "sqlite",
+        timestamp = "2024-01-01 12:00:00",
+        connection_name = "Test DB",
+      }
+
+      local results = matcher.match_statements(statements, parsed_output, metadata)
+
+      -- Should only have 2 results (the UPDATEs), not 4
+      assert.equals(2, #results)
+      assert.equals("UPDATE", results[1].type)
+      assert.equals("UPDATE", results[2].type)
+    end)
+
+    it("should filter out ROLLBACK statements", function()
+      local statements = {
+        { type = "UNKNOWN", text = "BEGIN" },
+        { type = "UPDATE", text = "UPDATE users SET status='active' WHERE id=1" },
+        { type = "UNKNOWN", text = "ROLLBACK" },
+      }
+
+      local parsed_output = {
+        headers = {},
+        rows = {},
+      }
+
+      local metadata = {
+        execution_time = 50,
+        row_count = 1,
+        db_type = "sqlite",
+        timestamp = "2024-01-01 12:00:00",
+        connection_name = "Test DB",
+      }
+
+      local results = matcher.match_statements(statements, parsed_output, metadata)
+
+      -- Should only have 1 result (the UPDATE)
+      assert.equals(1, #results)
+      assert.equals("UPDATE", results[1].type)
+    end)
+
+    it("should recognize transaction control statements", function()
+      assert.is_true(matcher._is_transaction_control("BEGIN"))
+      assert.is_true(matcher._is_transaction_control("BEGIN TRANSACTION"))
+      assert.is_true(matcher._is_transaction_control("START TRANSACTION"))
+      assert.is_true(matcher._is_transaction_control("COMMIT"))
+      assert.is_true(matcher._is_transaction_control("ROLLBACK"))
+      assert.is_true(matcher._is_transaction_control("END TRANSACTION"))
+      assert.is_true(matcher._is_transaction_control("END"))
+
+      assert.is_false(matcher._is_transaction_control("SELECT * FROM users"))
+      assert.is_false(matcher._is_transaction_control("UPDATE users SET status='active'"))
+    end)
+  end)
 end)
 

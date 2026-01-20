@@ -837,40 +837,114 @@ function M.apply_result_set_highlighting(bufnr, config)
         result_set_end
       )
 
-      -- Find pipe position to know where X/Y ends
-      local pipe_pos = line:find("|")
+      -- Find first pipe position to know where X/Y ends
+      local first_pipe_pos = line:find("|")
 
-      if pipe_pos then
-        -- Highlight "X/Y " part (value) - from after "Result Set " to before pipe
+      if first_pipe_pos then
+        -- Highlight "X/Y " part (value) - from after "Result Set " to before first pipe
         vim.api.nvim_buf_add_highlight(
           bufnr,
           ns_id,
           'EnhanceStatusValue',
           line_num,
           result_set_end,
-          pipe_pos - 1
+          first_pipe_pos - 1
         )
 
-        -- Find "Rows:" label
-        local rows_start = line:find("Rows:", pipe_pos)
+        -- Pattern: "Result Set X/Y | Rows: N | XX.XXms" or "Result Set X/Y | Rows: N" or "Result Set X/Y | XX.XXms"
+        -- We need to handle Rows (if present) and elapsed time (if present)
+        -- Order: Rows BEFORE elapsed time
+
+        -- Find "Rows:" label (if present)
+        local rows_start = line:find("Rows:", first_pipe_pos)
+
         if rows_start then
-          -- Highlight "| Rows:" part (label)
+          -- Check if there's elapsed time after "Rows:"
+          local second_pipe_pos = line:find("|", rows_start)
+
+          if second_pipe_pos then
+            -- Pattern: "Result Set X/Y | Rows: N | XX.XXms"
+            -- Highlight "| Rows:" (label)
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusLabel',
+              line_num,
+              first_pipe_pos - 1,
+              rows_start + 4  -- "Rows:" is 5 chars, so +4 from start
+            )
+
+            -- Highlight row count value (N)
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusValue',
+              line_num,
+              rows_start + 5,  -- After "Rows:"
+              second_pipe_pos - 1
+            )
+
+            -- Highlight " | " before elapsed time (label)
+            -- second_pipe_pos is 1-indexed from line:find(), so convert to 0-indexed
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusLabel',
+              line_num,
+              second_pipe_pos - 2,  -- Start of " | " (space before pipe)
+              second_pipe_pos + 1   -- End after " | " (exclusive)
+            )
+
+            -- Highlight elapsed time value (XX.XXms)
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusValue',
+              line_num,
+              second_pipe_pos + 1,  -- Start after " | "
+              #line
+            )
+          else
+            -- Pattern: "Result Set X/Y | Rows: N" (no elapsed time)
+            -- Highlight "| Rows:" part (label)
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusLabel',
+              line_num,
+              first_pipe_pos - 1,
+              rows_start + 4  -- "Rows:" is 5 chars, so +4 from start
+            )
+
+            -- Highlight the number part (value) - everything after "Rows:"
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceStatusValue',
+              line_num,
+              rows_start + 5,  -- After "Rows:"
+              #line
+            )
+          end
+        else
+          -- Pattern: "Result Set X/Y | XX.XXms" (elapsed time only, no Rows)
+          -- Highlight "| " (label)
           vim.api.nvim_buf_add_highlight(
             bufnr,
             ns_id,
             'EnhanceStatusLabel',
             line_num,
-            pipe_pos - 1,
-            rows_start + 4  -- "Rows:" is 5 chars, so +4 from start
+            first_pipe_pos - 1,
+            first_pipe_pos + 1  -- "| "
           )
 
-          -- Highlight the number part (value) - everything after "Rows:"
+          -- Highlight elapsed time value (XX.XXms)
           vim.api.nvim_buf_add_highlight(
             bufnr,
             ns_id,
             'EnhanceStatusValue',
             line_num,
-            rows_start + 5,  -- After "Rows:"
+            first_pipe_pos + 1,
             #line
           )
         end

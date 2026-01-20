@@ -356,6 +356,151 @@ describe("formatter", function()
       end
       assert.is_true(blank_line_found, "Should have blank line separators between result sets")
     end)
+
+    it("should display individual elapsed time for de-batched statements", function()
+      local statements = {
+        {
+          type = "UPDATE",
+          query_text = "UPDATE users SET status='active' WHERE id=1",
+          message = "✓ 1 row updated",
+          rows = 1,
+          elapsed = 12.34,
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM users",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" } }
+          },
+          rows = 1,
+          elapsed = 23.45,
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- First result set should have elapsed time
+      assert.is_not_nil(lines[1]:match("Result Set 1/2"))
+      assert.is_not_nil(lines[1]:match("12%.34ms"))
+
+      -- Second result set should have row count BEFORE elapsed time
+      local found_second_header = false
+      for _, line in ipairs(lines) do
+        if line:match("Result Set 2/2") then
+          -- Verify order: Rows before elapsed time
+          local rows_pos = line:find("Rows:")
+          local elapsed_pos = line:find("23%.45ms")
+          assert.is_not_nil(rows_pos, "Should have Rows label")
+          assert.is_not_nil(elapsed_pos, "Should have elapsed time")
+          assert.is_true(rows_pos < elapsed_pos, "Rows should come before elapsed time")
+          found_second_header = true
+          break
+        end
+      end
+      assert.is_true(found_second_header, "Should find second result set header")
+    end)
+
+    it("should not display elapsed time for batched statements", function()
+      local statements = {
+        {
+          type = "UPDATE",
+          query_text = "UPDATE users SET status='active' WHERE id=1",
+          message = "✓ 1 row updated",
+          rows = 1,
+          elapsed = 0, -- Batched statement (no individual time)
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "UPDATE",
+          query_text = "UPDATE users SET status='inactive' WHERE id=2",
+          message = "✓ 1 row updated",
+          rows = 1,
+          elapsed = nil, -- Batched statement (no individual time)
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- First result set should NOT have elapsed time (elapsed = 0)
+      assert.is_not_nil(lines[1]:match("Result Set 1/2"))
+      assert.is_nil(lines[1]:match("ms"))
+
+      -- Second result set should NOT have elapsed time (elapsed = nil)
+      local found_second_header = false
+      for _, line in ipairs(lines) do
+        if line:match("Result Set 2/2") then
+          assert.is_nil(line:match("ms"))
+          found_second_header = true
+          break
+        end
+      end
+      assert.is_true(found_second_header, "Should find second result set header")
+    end)
+
+    it("should handle mixed batched and de-batched statements", function()
+      local statements = {
+        {
+          type = "UPDATE",
+          query_text = "UPDATE users SET status='active' WHERE id=1",
+          message = "✓ 1 row updated",
+          rows = 1,
+          elapsed = 12.34, -- De-batched (has individual time)
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "SELECT",
+          query_text = "SELECT * FROM users",
+          result_table = {
+            headers = { "id", "name" },
+            rows = { { "1", "Alice" } }
+          },
+          rows = 1,
+          elapsed = 0, -- Batched (no individual time)
+          db_type = "sqlite",
+          db_name = "test.db"
+        },
+        {
+          type = "DELETE",
+          query_text = "DELETE FROM users WHERE id=1",
+          message = "✓ 1 row deleted",
+          rows = 1,
+          elapsed = 9.88, -- De-batched (has individual time)
+          db_type = "sqlite",
+          db_name = "test.db"
+        }
+      }
+
+      local lines = formatter.format_multiple_statements(statements)
+
+      -- First result set should have elapsed time
+      assert.is_not_nil(lines[1]:match("Result Set 1/3"))
+      assert.is_not_nil(lines[1]:match("12%.34ms"))
+
+      -- Second result set should NOT have elapsed time (batched)
+      local found_second = false
+      local found_third = false
+      for _, line in ipairs(lines) do
+        if line:match("Result Set 2/3") then
+          assert.is_nil(line:match("ms"))
+          found_second = true
+        end
+        if line:match("Result Set 3/3") then
+          assert.is_not_nil(line:match("9%.88ms"))
+          found_third = true
+        end
+      end
+      assert.is_true(found_second, "Should find second result set header")
+      assert.is_true(found_third, "Should find third result set header")
+    end)
   end)
 end)
 

@@ -231,6 +231,234 @@ function M.execute(connection, query, query_bufnr)
   end
 end
 
+---Execute a single SQLite statement and return parsed result
+---@param connection table SQLite connection
+---@param statement_text string Single SQL statement
+---@return table|nil Parsed result or nil on error
+---@return string|nil Error message if execution failed
+---@return number Execution time in milliseconds
+---@return number Row count
+local function execute_single_sqlite_statement(connection, statement_text)
+  local output_lines = {}
+  local error_lines = {}
+  local start_time = vim.loop.hrtime()
+
+  -- Expand path
+  local db_path = vim.fn.expand(connection.path)
+
+  -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
+  local query_upper = statement_text:upper()
+  local query_trimmed = query_upper:gsub("^%s+", "")
+  local is_dml = query_trimmed:match("^INSERT%s") or
+                 query_trimmed:match("^UPDATE%s") or
+                 query_trimmed:match("^DELETE%s")
+
+  -- For DML statements, append SELECT changes() to get affected row count
+  local exec_query = statement_text
+  if is_dml then
+    exec_query = statement_text .. "; SELECT changes();"
+  end
+
+  -- Execute synchronously using vim.fn.system
+  local cmd = string.format("sqlite3 %s -column -header %s",
+    vim.fn.shellescape(db_path),
+    vim.fn.shellescape(exec_query))
+
+  local output = vim.fn.system(cmd)
+  local exit_code = vim.v.shell_error
+
+  local end_time = vim.loop.hrtime()
+  local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
+
+  -- Split output into lines
+  for line in output:gmatch("[^\r\n]+") do
+    if line ~= "" then
+      table.insert(output_lines, line)
+    end
+  end
+
+  if exit_code ~= 0 then
+    return nil, output, duration, 0
+  end
+
+  local row_count = 0
+
+  -- For DML statements, extract the changes() result from the last line
+  if is_dml and #output_lines > 0 then
+    local last_line = output_lines[#output_lines]
+    local changes = tonumber(last_line)
+    if changes then
+      row_count = changes
+      -- Remove the changes() output lines (header + separator + value)
+      if #output_lines >= 3 then
+        table.remove(output_lines) -- Remove value
+        table.remove(output_lines) -- Remove separator
+        table.remove(output_lines) -- Remove header
+      end
+    end
+  else
+    -- For SELECT queries, count rows using unified logic
+    row_count = count_rows(output_lines, connection.type)
+  end
+
+  -- Parse the output
+  local parser = require("enhance.parser")
+  local parsed_result = parser.parse(output_lines, connection.type)
+
+  return parsed_result, nil, duration, row_count
+end
+
+---Execute SQLite statements individually (de-batched)
+---@param connection table SQLite connection
+---@param groups table[] Execution groups from classifier
+---@param query_bufnr number? Optional query buffer number
+local function execute_debatch_sqlite(connection, groups, query_bufnr)
+  local all_statement_results = {}
+  local total_duration = 0
+  local had_error = false
+  local error_message = nil
+
+  -- Process each group
+  for _, group in ipairs(groups) do
+    if group.type == "individual" then
+      -- Execute each statement individually
+      for _, stmt in ipairs(group.statements) do
+        local parsed_result, err, duration, row_count = execute_single_sqlite_statement(connection, stmt.text)
+        total_duration = total_duration + duration
+
+        if err then
+          -- Create error result
+          local result = {
+            type = stmt.type,
+            query_text = stmt.text,
+            rows = 0,
+            elapsed = duration,
+            db_type = connection.type,
+            db_name = connection.name,
+            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+            result_table = nil,
+            message = "ERROR: " .. err,
+            error = true,
+          }
+          table.insert(all_statement_results, result)
+          had_error = true
+          error_message = err
+          break -- Stop on first error
+        else
+          -- Create success result
+          local result = {
+            type = stmt.type,
+            query_text = stmt.text,
+            rows = row_count,
+            elapsed = duration,
+            db_type = connection.type,
+            db_name = connection.name,
+            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+          }
+
+          -- Add result_table for SELECT, message for DML/DDL
+          if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
+            result.result_table = {
+              headers = parsed_result.headers,
+              rows = parsed_result.rows,
+            }
+            result.message = nil
+          elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
+            result.result_table = nil
+            local statement_matcher = require("enhance.statement_matcher")
+            result.message = statement_matcher._generate_dml_message(stmt.type, row_count)
+          elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
+            result.result_table = nil
+            local statement_matcher = require("enhance.statement_matcher")
+            -- Detect query type for DDL
+            local query_type = nil
+            local upper = stmt.text:upper()
+            if upper:match("^CREATE%s+TABLE") then
+              query_type = "CREATE_TABLE"
+            elseif upper:match("^DROP%s+TABLE") then
+              query_type = "DROP_TABLE"
+            elseif upper:match("^ALTER%s+TABLE") then
+              query_type = "ALTER_TABLE"
+            end
+            result.message = statement_matcher._generate_ddl_message(query_type)
+          end
+
+          table.insert(all_statement_results, result)
+        end
+      end
+
+      if had_error then
+        break -- Stop processing groups on error
+      end
+    else
+      -- Batch group - execute together (future implementation)
+      -- For now, execute individually
+      for _, stmt in ipairs(group.statements) do
+        local parsed_result, err, duration, row_count = execute_single_sqlite_statement(connection, stmt.text)
+        total_duration = total_duration + duration
+
+        if err then
+          had_error = true
+          error_message = err
+          break
+        end
+
+        -- Create result (batched statements don't show individual elapsed time)
+        local result = {
+          type = stmt.type,
+          query_text = stmt.text,
+          rows = stmt.type == "SELECT" and #parsed_result.rows or row_count,
+          elapsed = 0,  -- Batched statements: no individual time (only total shown in status line)
+          db_type = connection.type,
+          db_name = connection.name,
+          executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+        }
+
+        if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
+          result.result_table = {
+            headers = parsed_result.headers,
+            rows = parsed_result.rows,
+          }
+        end
+
+        table.insert(all_statement_results, result)
+      end
+
+      if had_error then
+        break
+      end
+    end
+  end
+
+  -- Format and display results
+  if had_error then
+    local error_display = {
+      "Query Execution Failed",
+      "",
+      error_message or "Unknown error",
+    }
+    require("enhance.results").display_message(error_display, connection, query_bufnr)
+    vim.notify("Query execution failed", vim.log.levels.ERROR)
+  else
+    local formatter = require("enhance.formatter")
+    local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+
+    -- Build metadata
+    local metadata = {
+      execution_time = total_duration,
+      row_count = total_table_rows or 0,
+      db_type = connection.type,
+      timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+      connection_name = connection.name,
+      statement_count = #all_statement_results,
+      total_table_rows = total_table_rows,
+    }
+
+    require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
+    vim.notify("Query executed successfully", vim.log.levels.INFO)
+  end
+end
+
 ---Execute SQLite query using sqlite3 CLI
 ---@param connection table SQLite connection
 ---@param query string SQL query
@@ -254,6 +482,19 @@ function M.execute_sqlite(connection, query, query_bufnr)
   -- Detect statements BEFORE execution (Phase 1)
   local statement_detector = require("enhance.statement_detector")
   local detected_statements = statement_detector.detect_statements(query)
+
+  -- Classify execution strategy (Phase 2)
+  local statement_classifier = require("enhance.statement_classifier")
+  local classification = statement_classifier.classify_for_execution(detected_statements)
+
+  -- Route to appropriate execution path
+  if classification.execution_mode == "debatch" then
+    -- Use new de-batch execution
+    execute_debatch_sqlite(connection, classification.groups, query_bufnr)
+    return
+  end
+
+  -- Continue with existing batch execution for batch mode
 
   -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
   local query_upper = query:upper()
@@ -374,7 +615,8 @@ function M.execute_sqlite(connection, query, query_bufnr)
             formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
 
             -- Update metadata for multiple statements
-            metadata.statement_count = #detected_statements
+            -- Use matched_results count (filters out transaction control statements)
+            metadata.statement_count = #matched_results
             metadata.total_table_rows = total_table_rows
           else
             -- Fallback to old format for backward compatibility
@@ -548,7 +790,8 @@ function M.execute_sqlserver(connection, query, query_bufnr)
             formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
 
             -- Update metadata for multiple statements
-            metadata.statement_count = #detected_statements
+            -- Use matched_results count (filters out transaction control statements)
+            metadata.statement_count = #matched_results
             metadata.total_table_rows = total_table_rows
           else
             -- Fallback to old format for backward compatibility
@@ -817,6 +1060,8 @@ M._execute_sqlite = M.execute_sqlite
 M._execute_sqlserver = M.execute_sqlserver
 M._execute_mysql = M.execute_mysql
 M._execute_postgres = M.execute_postgres
+M._execute_single_sqlite_statement = execute_single_sqlite_statement
+M._execute_debatch_sqlite = execute_debatch_sqlite
 
 return M
 

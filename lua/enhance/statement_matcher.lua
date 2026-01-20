@@ -33,6 +33,21 @@ local function generate_ddl_message(query_type)
   end
 end
 
+---Check if statement is a transaction control statement (should not display as result)
+---@param statement_text string Statement text
+---@return boolean True if transaction control statement
+local function is_transaction_control(statement_text)
+  local upper = statement_text:upper()
+  local trimmed = vim.trim(upper)
+
+  return trimmed:match("^BEGIN") ~= nil or
+         trimmed:match("^START%s+TRANSACTION") ~= nil or
+         trimmed:match("^COMMIT") ~= nil or
+         trimmed:match("^ROLLBACK") ~= nil or
+         trimmed:match("^END%s+TRANSACTION") ~= nil or
+         trimmed:match("^END$") ~= nil
+end
+
 ---Match detected statements to parsed output
 ---@param statements table[] Array of detected statements from statement_detector
 ---@param parsed_output table Parsed output from parser
@@ -55,6 +70,11 @@ function M.match_statements(statements, parsed_output, metadata)
     local result_consumed = false
 
     for _, stmt in ipairs(statements) do
+      -- Skip transaction control statements (BEGIN, COMMIT, ROLLBACK, etc.)
+      if is_transaction_control(stmt.text) then
+        goto continue
+      end
+
       local result = {
         type = stmt.type,
         query_text = stmt.text,
@@ -87,6 +107,8 @@ function M.match_statements(statements, parsed_output, metadata)
       end
 
       table.insert(results, result)
+
+      ::continue::
     end
 
     return results
@@ -95,6 +117,11 @@ function M.match_statements(statements, parsed_output, metadata)
   -- Handle multiple statements
   local result_set_index = 1
   for _, stmt in ipairs(statements) do
+    -- Skip transaction control statements (BEGIN, COMMIT, ROLLBACK, etc.)
+    if is_transaction_control(stmt.text) then
+      goto continue
+    end
+
     local result = {
       type = stmt.type,
       query_text = stmt.text,
@@ -104,7 +131,7 @@ function M.match_statements(statements, parsed_output, metadata)
       db_name = metadata.connection_name,
       executed_on = metadata.timestamp,
     }
-    
+
     -- SELECT and other query statements (PRAGMA, SHOW, etc.) get next result set
     if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
       if result_set_index <= #parsed_output.result_sets then
@@ -143,16 +170,19 @@ function M.match_statements(statements, parsed_output, metadata)
         end
       end
     end
-    
+
     table.insert(results, result)
+
+    ::continue::
   end
-  
+
   return results
 end
 
 -- Expose internal functions for testing
 M._generate_dml_message = generate_dml_message
 M._generate_ddl_message = generate_ddl_message
+M._is_transaction_control = is_transaction_control
 
 return M
 

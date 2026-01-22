@@ -79,7 +79,7 @@ function M.match_statements(statements, parsed_output, metadata)
         type = stmt.type,
         query_text = stmt.text,
         rows = 0,
-        elapsed = metadata.execution_time or 0,
+        elapsed = 0,  -- Batched execution: no individual time (only total shown in status line)
         db_type = metadata.db_type,
         db_name = metadata.connection_name,
         executed_on = metadata.timestamp,
@@ -126,7 +126,7 @@ function M.match_statements(statements, parsed_output, metadata)
       type = stmt.type,
       query_text = stmt.text,
       rows = 0,
-      elapsed = metadata.execution_time or 0,
+      elapsed = 0,  -- Batched execution: no individual time (only total shown in status line)
       db_type = metadata.db_type,
       db_name = metadata.connection_name,
       executed_on = metadata.timestamp,

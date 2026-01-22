@@ -391,8 +391,9 @@ local function execute_debatch_sqlite(connection, groups, query_bufnr)
         break -- Stop processing groups on error
       end
     else
-      -- Batch group - execute together (future implementation)
-      -- For now, execute individually
+      -- Batch group within de-batch mode - execute individually with timing
+      -- Note: These are "batch" statements (SELECT, PRAGMA) within a de-batched execution
+      -- They should still show individual elapsed time since we're in de-batch mode
       for _, stmt in ipairs(group.statements) do
         local parsed_result, err, duration, row_count = execute_single_sqlite_statement(connection, stmt.text)
         total_duration = total_duration + duration
@@ -403,12 +404,12 @@ local function execute_debatch_sqlite(connection, groups, query_bufnr)
           break
         end
 
-        -- Create result (batched statements don't show individual elapsed time)
+        -- Create result with individual elapsed time (we're in de-batch mode)
         local result = {
           type = stmt.type,
           query_text = stmt.text,
           rows = stmt.type == "SELECT" and #parsed_result.rows or row_count,
-          elapsed = 0,  -- Batched statements: no individual time (only total shown in status line)
+          elapsed = duration,  -- Show individual time in de-batch mode
           db_type = connection.type,
           db_name = connection.name,
           executed_on = os.date("%Y-%m-%d %H:%M:%S"),

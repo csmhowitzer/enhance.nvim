@@ -234,15 +234,19 @@ local function format_single_statement(statement, statement_num, total_statement
     local padded_label = result_set_label .. string.rep(" ", math.max(0, 15 - #result_set_label))
 
     local header = padded_label
+    local has_content = false  -- Track if we've added anything after the label
 
     -- Add row count to header if this is a table result (BEFORE elapsed time)
     if statement.result_table and statement.rows then
       header = header .. string.format("| Rows: %d", statement.rows)
+      has_content = true
     end
 
     -- Add elapsed time if available (de-batched statements only) (AFTER rows)
     if statement.elapsed and statement.elapsed > 0 then
-      header = header .. string.format(" | %.2fms", statement.elapsed)
+      -- Use " | " if we already have content (for separation), otherwise "| " (for alignment)
+      local separator = has_content and " | " or "| "
+      header = header .. string.format("%s%.2fms", separator, statement.elapsed)
     end
 
     table.insert(lines, header)

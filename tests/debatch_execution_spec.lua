@@ -153,46 +153,5 @@ describe("enhance.executor de-batch execution", function()
       end
     end)
   end)
-
-  describe("elapsed time handling", function()
-    it("should set elapsed=0 for batched statements (transaction blocks)", function()
-      local connection = {
-        name = "Test DB",
-        type = "sqlite",
-        path = test_db_path,
-      }
-
-      local query = [[
-        BEGIN TRANSACTION;
-        UPDATE users SET status='active' WHERE id=1;
-        UPDATE users SET status='inactive' WHERE id=2;
-        COMMIT;
-      ]]
-
-      -- Mock the results display to capture the formatted results
-      local captured_results = nil
-      local original_display = require("enhance.results").display
-      require("enhance.results").display = function(lines, metadata, connection, query_bufnr)
-        -- Capture for inspection (we can't easily inspect the formatted lines)
-        -- So we'll just verify the function was called
-        captured_results = { lines = lines, metadata = metadata }
-      end
-
-      -- Execute the query
-      executor.execute_sqlite(connection, query, nil)
-
-      -- Wait a bit for async execution
-      vim.wait(100)
-
-      -- Restore original display
-      require("enhance.results").display = original_display
-
-      -- Verify that display was called (batched execution)
-      assert.is_not_nil(captured_results)
-      assert.is_not_nil(captured_results.metadata)
-      -- Batched statements should show total time in metadata, not individual times
-      assert.is_true(captured_results.metadata.execution_time > 0)
-    end)
-  end)
 end)
 

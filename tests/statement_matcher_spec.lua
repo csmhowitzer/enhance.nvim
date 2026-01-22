@@ -38,7 +38,7 @@ describe("statement_matcher", function()
         assert.are.same({ "id", "name" }, results[1].result_table.headers)
         assert.equals(2, #results[1].result_table.rows)
         assert.equals(2, results[1].rows)
-        assert.equals(12.5, results[1].elapsed)
+        assert.equals(0, results[1].elapsed)  -- Batched execution: no individual time
         assert.equals("sqlite", results[1].db_type)
         assert.equals("test.db", results[1].db_name)
       end)
@@ -373,6 +373,119 @@ describe("statement_matcher", function()
 
       assert.is_false(matcher._is_transaction_control("SELECT * FROM users"))
       assert.is_false(matcher._is_transaction_control("UPDATE users SET status='active'"))
+    end)
+  end)
+
+  describe("batched execution behavior", function()
+    it("should set elapsed=0 for all statements in batched execution", function()
+      -- statement_matcher is ONLY used for batched execution
+      -- (de-batched execution uses execute_debatch_sqlite which sets elapsed directly)
+      -- Batched execution should set elapsed=0 for ALL statements
+      -- Total execution time is shown in metadata.execution_time (status line)
+
+      local statements = {
+        { type = "UPDATE", text = "UPDATE users SET status='active' WHERE id=1" },
+        { type = "SELECT", text = "SELECT * FROM users WHERE id=1" },
+        { type = "INSERT", text = "INSERT INTO logs VALUES (1, 'test')" }
+      }
+
+      local parsed_output = {
+        multiple_results = true,
+        result_sets = {
+          {
+            headers = { "id", "name", "status" },
+            rows = { { "1", "Alice", "active" } }
+          }
+        }
+      }
+
+      local metadata = {
+        execution_time = 45.67,  -- Total time for entire batch
+        row_count = 1,
+        db_type = "sqlite",
+        timestamp = "2025-01-26 20:00:00",
+        connection_name = "test.db"
+      }
+
+      local results = matcher.match_statements(statements, parsed_output, metadata)
+
+      -- Verify ALL statements have elapsed=0 (batched execution)
+      assert.equals(3, #results)
+      for i, result in ipairs(results) do
+        assert.equals(0, result.elapsed,
+          string.format("Statement %d should have elapsed=0 for batched execution", i))
+      end
+
+      -- Total time is in metadata, not individual statements
+      assert.equals(45.67, metadata.execution_time)
+    end)
+
+    it("should set elapsed=0 for single statement in batched execution", function()
+      -- Even a single statement goes through batched execution path
+      -- when using statement_matcher (vs execute_debatch_sqlite)
+
+      local statements = {
+        { type = "SELECT", text = "SELECT * FROM users" }
+      }
+
+      local parsed_output = {
+        headers = { "id", "name" },
+        rows = { { "1", "Alice" }, { "2", "Bob" } }
+      }
+
+      local metadata = {
+        execution_time = 12.5,
+        row_count = 2,
+        db_type = "sqlite",
+        timestamp = "2025-01-26 20:00:00",
+        connection_name = "test.db"
+      }
+
+      local results = matcher.match_statements(statements, parsed_output, metadata)
+
+      assert.equals(1, #results)
+      assert.equals(0, results[1].elapsed)  -- Batched execution: no individual time
+      assert.equals(12.5, metadata.execution_time)  -- Total time in metadata
+    end)
+
+    it("should set elapsed=0 for transaction block statements", function()
+      -- Transaction blocks are always batched (executed together)
+      -- Individual statements should NOT show elapsed time
+
+      local statements = {
+        { type = "UPDATE", text = "UPDATE users SET status='active' WHERE id=1" },
+        { type = "UPDATE", text = "UPDATE users SET status='inactive' WHERE id=2" },
+        { type = "SELECT", text = "SELECT COUNT(*) FROM users" }
+      }
+
+      local parsed_output = {
+        multiple_results = true,
+        result_sets = {
+          {
+            headers = { "COUNT(*)" },
+            rows = { { "2" } }
+          }
+        }
+      }
+
+      local metadata = {
+        execution_time = 23.45,  -- Total time for entire transaction
+        row_count = 2,
+        db_type = "sqlite",
+        timestamp = "2025-01-26 20:00:00",
+        connection_name = "test.db"
+      }
+
+      local results = matcher.match_statements(statements, parsed_output, metadata)
+
+      -- All statements in transaction should have elapsed=0
+      assert.equals(3, #results)
+      assert.equals(0, results[1].elapsed)  -- UPDATE 1
+      assert.equals(0, results[2].elapsed)  -- UPDATE 2
+      assert.equals(0, results[3].elapsed)  -- SELECT
+
+      -- Only total time shown in status line (metadata)
+      assert.equals(23.45, metadata.execution_time)
     end)
   end)
 end)

@@ -436,8 +436,12 @@ local function execute_debatch_sqlite(connection, groups, query_bufnr)
     local error_display = {
       "Query Execution Failed",
       "",
-      error_message or "Unknown error",
     }
+    -- Split error message by newlines to avoid nvim_buf_set_lines error
+    local error_text = error_message or "Unknown error"
+    for line in error_text:gmatch("[^\r\n]+") do
+      table.insert(error_display, line)
+    end
     require("enhance.results").display_message(error_display, connection, query_bufnr)
     vim.notify("Query execution failed", vim.log.levels.ERROR)
   else
@@ -1008,8 +1012,23 @@ function M.execute_postgres(connection, query, query_bufnr)
       end
 
       if exit_code == 0 then
-        -- Count rows using unified logic
+        -- Count rows using unified logic (this also removes DML footer lines)
         local row_count = count_rows(output_lines, connection.type)
+
+        -- Detect if this is a DML statement (INSERT/UPDATE/DELETE)
+        -- If row_count > 0 but output_lines is empty, it was a DML statement
+        local query_upper = query:upper():gsub("^%s+", "")
+        local is_insert = query_upper:match("^INSERT%s")
+        local is_update = query_upper:match("^UPDATE%s")
+        local is_delete = query_upper:match("^DELETE%s")
+        local is_dml = is_insert or is_update or is_delete
+
+        -- If DML statement with affected rows, add success message
+        if is_dml and row_count > 0 and #output_lines == 0 then
+          local action = is_insert and "inserted" or (is_update and "updated" or "deleted")
+          local message = string.format("✓ %d row%s %s", row_count, row_count == 1 and "" or "s", action)
+          table.insert(output_lines, message)
+        end
 
         -- Build metadata
         local metadata = {

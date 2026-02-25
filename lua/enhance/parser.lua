@@ -61,7 +61,8 @@ local function parse_single_sqlserver_result_set(lines)
   local separator_line = lines[separator_idx]
 
   -- Detect format: pipe-separated vs space-separated
-  local is_pipe_separated = separator_line:match("|") ~= nil
+  -- Check header line for pipes (more reliable than separator line)
+  local is_pipe_separated = header_line:match("|") ~= nil
 
   if is_pipe_separated then
     -- PIPE-SEPARATED FORMAT (e.g., "ID|FName|LName")
@@ -121,10 +122,15 @@ local function parse_single_sqlserver_result_set(lines)
 
       local row = {}
 
-      -- Use same column positions to extract cells
-      for _, col in ipairs(col_positions) do
-        local cell = line:sub(col.start, col.start + col.length - 1)
-        table.insert(row, vim.trim(cell))
+      -- For single column, just take the entire trimmed line
+      if #col_positions == 1 then
+        table.insert(row, vim.trim(line))
+      else
+        -- Use column positions to extract cells for multi-column
+        for _, col in ipairs(col_positions) do
+          local cell = line:sub(col.start, col.start + col.length - 1)
+          table.insert(row, vim.trim(cell))
+        end
       end
 
       if #row > 0 then
@@ -313,13 +319,25 @@ function M.parse_sqlite(lines)
   }
 end
 
----Parse MySQL output
----Format: Tab-separated values (TSV) from mysql -e flag
+---Find all "X rows in set" markers in MySQL output
 ---@param lines string[] Raw output lines
----@return table Parsed result {headers: string[], rows: string[][], metadata: table}
-function M.parse_mysql(lines)
+---@return number[] Indices of all "rows in set" lines
+local function find_all_mysql_footers(lines)
+  local markers = {}
+  for i, line in ipairs(lines) do
+    if line:match("rows? in set") then
+      table.insert(markers, i)
+    end
+  end
+  return markers
+end
+
+---Parse a single MySQL result set
+---@param lines string[] Lines for this result set
+---@return table Parsed result {headers: string[], rows: string[][]}
+local function parse_single_mysql_result_set(lines)
   if not lines or #lines == 0 then
-    return { headers = {}, rows = {}, metadata = {} }
+    return { headers = {}, rows = {} }
   end
 
   local headers = {}
@@ -342,6 +360,10 @@ function M.parse_mysql(lines)
       -- Parse data rows
       for i = 2, #lines do
         local line = lines[i]
+        -- Stop at footer
+        if line:match("rows? in set") or line:match("rows? affected") then
+          break
+        end
         local row = {}
         for cell in line:gmatch("[^\t]+") do
           table.insert(row, vim.trim(cell))
@@ -398,86 +420,187 @@ function M.parse_mysql(lines)
 
   return {
     headers = headers,
-    rows = rows,
-    metadata = { db_type = "mysql" }
+    rows = rows
   }
 end
 
----Parse PostgreSQL (psql) output
----Format: Simple table with | separators
+---Parse MySQL output
+---Format: Tab-separated values (TSV) or ASCII table format
+---Detects multiple result sets via "X rows in set" markers
 ---@param lines string[] Raw output lines
----@return table Parsed result {headers: string[], rows: string[][], metadata: table}
-function M.parse_postgresql(lines)
+---@return table Parsed result {headers: string[], rows: string[][], metadata: table} or {multiple_results: boolean, result_sets: table[], metadata: table}
+function M.parse_mysql(lines)
   if not lines or #lines == 0 then
     return { headers = {}, rows = {}, metadata = {} }
   end
 
-  local headers = {}
-  local rows = {}
-  local separator_idx = nil
+  -- Find all "rows in set" markers
+  local markers = find_all_mysql_footers(lines)
 
-  -- Find separator line (dashes with optional + at intersections)
-  -- Single column: "----"
-  -- Multi column: "----+----"
-  for i, line in ipairs(lines) do
-    if line:match("^%-+%+") or line:match("^%s*%-+%+") or line:match("^%s*%-+%s*$") then
-      separator_idx = i
-      break
+  -- If we have multiple markers, we have multiple result sets
+  if #markers > 1 then
+    local result_sets = {}
+    local start_idx = 1
+
+    for _, marker_idx in ipairs(markers) do
+      -- Extract lines for this result set (from start to marker)
+      local result_set_lines = vim.list_slice(lines, start_idx, marker_idx - 1)
+
+      -- Parse this result set
+      local parsed = parse_single_mysql_result_set(result_set_lines)
+
+      -- Only include result sets that have data
+      if #parsed.headers > 0 or #parsed.rows > 0 then
+        table.insert(result_sets, {
+          headers = parsed.headers,
+          rows = parsed.rows,
+          metadata = { db_type = "mysql" }
+        })
+      end
+
+      -- Next result set starts after this marker
+      start_idx = marker_idx + 1
     end
+
+    return {
+      multiple_results = true,
+      result_sets = result_sets,
+      metadata = { db_type = "mysql" }
+    }
   end
 
-  if separator_idx and separator_idx > 1 then
-    -- Parse headers from line before separator
-    local header_line = lines[separator_idx - 1]
+  -- Single result set - use existing logic
+  local parsed = parse_single_mysql_result_set(lines)
+  return {
+    headers = parsed.headers,
+    rows = parsed.rows,
+    metadata = { db_type = "mysql" }
+  }
+end
 
-    -- Check if this is a multi-column table (has | separators)
-    if header_line:match("|") then
-      -- Multi-column: split by |
-      for header in header_line:gmatch("[^|]+") do
-        table.insert(headers, vim.trim(header))
-      end
-    else
-      -- Single column: entire line is the header
-      table.insert(headers, vim.trim(header_line))
+---Find all separator line indices in PostgreSQL output
+---@param lines string[] Raw output lines
+---@return number[] Array of separator line indices
+local function find_all_postgresql_separators(lines)
+  local separators = {}
+  for i, line in ipairs(lines) do
+    if line:match("^%-+%+") or line:match("^%s*%-+%+") or line:match("^%s*%-+%s*$") then
+      table.insert(separators, i)
+    end
+  end
+  return separators
+end
+
+---Parse a single PostgreSQL result set
+---@param lines string[] Lines for this result set
+---@param separator_idx number Index of separator line
+---@param next_separator_idx number? Index of next separator (nil if last result set)
+---@return table Parsed result {headers: string[], rows: string[][]}
+local function parse_single_postgresql_result_set(lines, separator_idx, next_separator_idx)
+  local headers = {}
+  local rows = {}
+
+  if not separator_idx or separator_idx <= 1 then
+    return { headers = headers, rows = rows }
+  end
+
+  -- Parse headers from line before separator
+  local header_line = lines[separator_idx - 1]
+
+  -- Check if this is a multi-column table (has | separators)
+  if header_line:match("|") then
+    -- Multi-column: split by |
+    for header in header_line:gmatch("[^|]+") do
+      table.insert(headers, vim.trim(header))
+    end
+  else
+    -- Single column: entire line is the header
+    table.insert(headers, vim.trim(header_line))
+  end
+
+  -- Normalize headers (replace blank headers with default names)
+  headers = normalize_headers(headers)
+
+  -- Determine end of this result set
+  local end_idx = next_separator_idx and (next_separator_idx - 2) or #lines
+
+  -- Parse data rows
+  for i = separator_idx + 1, end_idx do
+    local line = lines[i]
+    -- Stop at footer
+    if line:match("^%(.*rows?%)") or line:match("^[A-Z]+%s+%d+%s+%d+") then
+      break
     end
 
-    -- Normalize headers (replace blank headers with default names)
-    headers = normalize_headers(headers)
-
-    -- Parse data rows
-    for i = separator_idx + 1, #lines do
-      local line = lines[i]
-      -- Stop at footer
-      if line:match("^%(.*rows?%)") or line:match("^[A-Z]+%s+%d+%s+%d+") then
-        break
-      end
-
-      -- Check if multi-column (has |) or single column
-      if line:match("|") then
-        -- Multi-column: split by |
-        local row = {}
-        for cell in line:gmatch("[^|]+") do
-          local trimmed = vim.trim(cell)
-          if trimmed ~= "" then
-            table.insert(row, trimmed)
-          end
-        end
-        if #row > 0 then
-          table.insert(rows, row)
-        end
-      else
-        -- Single column: entire line is the value
-        local trimmed = vim.trim(line)
+    -- Check if multi-column (has |) or single column
+    if line:match("|") then
+      -- Multi-column: split by |
+      local row = {}
+      for cell in line:gmatch("[^|]+") do
+        local trimmed = vim.trim(cell)
         if trimmed ~= "" then
-          table.insert(rows, { trimmed })
+          table.insert(row, trimmed)
         end
+      end
+      if #row > 0 then
+        table.insert(rows, row)
+      end
+    else
+      -- Single column: entire line is the value
+      local trimmed = vim.trim(line)
+      if trimmed ~= "" then
+        table.insert(rows, { trimmed })
       end
     end
   end
 
   return {
     headers = headers,
-    rows = rows,
+    rows = rows
+  }
+end
+
+---Parse PostgreSQL (psql) output
+---Format: Simple table with | separators
+---@param lines string[] Raw output lines
+---@return table Parsed result {headers: string[], rows: string[][], metadata: table} or {multiple_results: boolean, result_sets: table[], metadata: table}
+function M.parse_postgresql(lines)
+  if not lines or #lines == 0 then
+    return { headers = {}, rows = {}, metadata = {} }
+  end
+
+  -- Find all separator lines
+  local separators = find_all_postgresql_separators(lines)
+
+  if #separators == 0 then
+    return { headers = {}, rows = {}, metadata = { db_type = "postgresql" } }
+  end
+
+  -- Single result set - maintain backward compatibility
+  if #separators == 1 then
+    local result = parse_single_postgresql_result_set(lines, separators[1], nil)
+    return {
+      headers = result.headers,
+      rows = result.rows,
+      metadata = { db_type = "postgresql" }
+    }
+  end
+
+  -- Multiple result sets
+  local result_sets = {}
+  for i, sep_idx in ipairs(separators) do
+    local next_sep_idx = separators[i + 1]
+    local result = parse_single_postgresql_result_set(lines, sep_idx, next_sep_idx)
+    table.insert(result_sets, {
+      headers = result.headers,
+      rows = result.rows,
+      metadata = { db_type = "postgresql" }
+    })
+  end
+
+  return {
+    multiple_results = true,
+    result_sets = result_sets,
     metadata = { db_type = "postgresql" }
   }
 end
@@ -532,6 +655,10 @@ M._find_all_separators = find_all_separators
 M._parse_single_result_set = parse_single_result_set
 M._find_all_rows_affected_markers = find_all_rows_affected_markers
 M._parse_single_sqlserver_result_set = parse_single_sqlserver_result_set
+M._find_all_mysql_footers = find_all_mysql_footers
+M._parse_single_mysql_result_set = parse_single_mysql_result_set
+M._find_all_postgresql_separators = find_all_postgresql_separators
+M._parse_single_postgresql_result_set = parse_single_postgresql_result_set
 M._parse_sqlserver = M.parse_sqlserver
 M._parse_sqlite = M.parse_sqlite
 M._parse_mysql = M.parse_mysql

@@ -291,8 +291,8 @@ function M.format_multiple_statements(statements, user_config)
       table.insert(all_lines, line)
     end
 
-    -- Count rows from table results only (not messages)
-    if statement.result_table and statement.rows then
+    -- Count rows from both table results (SELECT) and DML statements (INSERT/UPDATE/DELETE)
+    if statement.rows then
       total_rows = total_rows + statement.rows
     end
 

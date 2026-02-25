@@ -80,6 +80,55 @@ function M.get_current()
   return current_connection
 end
 
+---Disconnect from current connection
+function M.disconnect()
+  if not current_connection then
+    vim.notify("No active connection to disconnect", vim.log.levels.WARN)
+    return
+  end
+
+  local conn_name = current_connection.name
+  current_connection = nil
+  vim.notify("Disconnected from: " .. conn_name, vim.log.levels.INFO)
+
+  -- Collapse tree and refresh explorer if it exists
+  local explorer = require("enhance.explorer")
+  if explorer.is_initialized() then
+    explorer.collapse_connection(conn_name)
+    explorer.refresh()
+  end
+end
+
+---Connect to a database (with connection test)
+---@param conn table Connection to connect to
+function M.connect(conn)
+  if not conn then
+    vim.notify("Invalid connection", vim.log.levels.ERROR)
+    return false
+  end
+
+  -- Test the connection first
+  vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
+  local executor = require("enhance.executor")
+  local success, error_msg = executor.test_connection(conn)
+
+  if not success then
+    vim.notify("Connection failed: " .. (error_msg or "Unknown error"), vim.log.levels.ERROR)
+    return false
+  end
+
+  -- Connection succeeded - set as current
+  M.set_current(conn)
+
+  -- Refresh explorer if it exists
+  local explorer = require("enhance.explorer")
+  if explorer.is_initialized() then
+    explorer.refresh()
+  end
+
+  return true
+end
+
 ---Show connection browser
 function M.show_connections()
   local buf = vim.api.nvim_create_buf(false, true)
@@ -115,11 +164,13 @@ function M.show_connections()
     -- Find connection index from line (accounting for header)
     local conn_idx = line - 3
     if conn_idx > 0 and conn_idx <= #connections then
-      M.set_current(connections[conn_idx])
-      require("enhance.query").create_query_buffer(connections[conn_idx])
-      -- Close the connection browser window specifically
-      if vim.api.nvim_win_is_valid(browser_win) then
-        vim.api.nvim_win_close(browser_win, false)
+      local conn = connections[conn_idx]
+      -- Use the new connect function (includes connection test)
+      if M.connect(conn) then
+        -- Close the connection browser window
+        if vim.api.nvim_win_is_valid(browser_win) then
+          vim.api.nvim_win_close(browser_win, false)
+        end
       end
     end
   end, { buffer = buf })
@@ -131,6 +182,8 @@ end
 
 -- Expose for testing
 M._connections = connections
+M._disconnect = M.disconnect
+M._connect = M.connect
 
 return M
 

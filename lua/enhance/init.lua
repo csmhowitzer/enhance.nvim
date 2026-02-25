@@ -210,6 +210,10 @@ function M.setup(opts)
     require("enhance.config").toggle_formatting()
   end, { desc = "Toggle result formatting (parser + formatter)" })
 
+  vim.api.nvim_create_user_command("EnhanceDisconnect", function()
+    require("enhance.connections").disconnect()
+  end, { desc = "Disconnect from current database" })
+
   -- Set up global keymaps
   -- Smart keymap: starts workspace if not initialized, otherwise toggles explorer
   vim.keymap.set('n', '<leader>de', function()
@@ -235,6 +239,11 @@ function M.setup(opts)
   vim.keymap.set('n', '<leader>dd', function()
     require("enhance.explorer").delete_file()
   end, { desc = "[D]elete [D]atabase file" })
+
+  -- Disconnect from database
+  vim.keymap.set('n', '<leader>dx', function()
+    require("enhance.connections").disconnect()
+  end, { desc = "[D]atabase Disconnect (e[X]it)" })
 end
 
 ---Toggle plugin enabled state

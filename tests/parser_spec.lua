@@ -79,6 +79,52 @@ describe("parser", function()
       assert.equals(2, #result.rows)
       assert.are.same({ "Alice" }, result.rows[1])
     end)
+
+    describe("multiple result sets", function()
+      it("should detect multiple result sets via '(X rows affected)' markers", function()
+        local lines = {
+          "id|name",
+          "--|----",
+          "1|Alice",
+          "2|Bob",
+          "(2 rows affected)",
+          "",
+          "email",
+          "-----",
+          "alice@test.com",
+          "(1 rows affected)",
+        }
+
+        local result = parser._parse_sqlserver(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set
+        assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+        assert.equals(2, #result.result_sets[1].rows)
+
+        -- Second result set
+        assert.are.same({ "email" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+      end)
+
+      it("should NOT set multiple_results for single result set", function()
+        local lines = {
+          "id|name",
+          "--|----",
+          "1|Alice",
+          "(1 rows affected)",
+        }
+
+        local result = parser._parse_sqlserver(lines)
+
+        -- Single result set should NOT have multiple_results flag
+        assert.is_nil(result.multiple_results)
+        assert.are.same({ "id", "name" }, result.headers)
+        assert.equals(1, #result.rows)
+      end)
+    end)
   end)
 
   describe("parse_sqlite", function()
@@ -290,6 +336,58 @@ describe("parser", function()
       assert.are.same({ "id" }, result.headers)
       assert.equals(0, #result.rows)
     end)
+
+    describe("multiple result sets", function()
+      it("should detect multiple result sets via 'rows in set' markers", function()
+        local lines = {
+          "+----+-------+",
+          "| id | name  |",
+          "+----+-------+",
+          "|  1 | Alice |",
+          "|  2 | Bob   |",
+          "+----+-------+",
+          "2 rows in set (0.01 sec)",
+          "",
+          "+----------------+",
+          "| email          |",
+          "+----------------+",
+          "| alice@test.com |",
+          "+----------------+",
+          "1 rows in set (0.00 sec)",
+        }
+
+        local result = parser._parse_mysql(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set
+        assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+        assert.equals(2, #result.result_sets[1].rows)
+
+        -- Second result set
+        assert.are.same({ "email" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+      end)
+
+      it("should NOT set multiple_results for single result set", function()
+        local lines = {
+          "+----+-------+",
+          "| id | name  |",
+          "+----+-------+",
+          "|  1 | Alice |",
+          "+----+-------+",
+          "1 rows in set (0.00 sec)",
+        }
+
+        local result = parser._parse_mysql(lines)
+
+        -- Single result set should NOT have multiple_results flag
+        assert.is_nil(result.multiple_results)
+        assert.are.same({ "id", "name" }, result.headers)
+        assert.equals(1, #result.rows)
+      end)
+    end)
   end)
 
   describe("parse_postgresql", function()
@@ -322,6 +420,52 @@ describe("parser", function()
 
       assert.are.same({ "id", "name" }, result.headers)
       assert.equals(0, #result.rows)
+    end)
+
+    describe("multiple result sets", function()
+      it("should detect multiple result sets via separator lines", function()
+        local lines = {
+          " id | name  ",
+          "----+-------",
+          "  1 | Alice",
+          "  2 | Bob",
+          "(2 rows)",
+          "",
+          " email",
+          "------",
+          " alice@test.com",
+          "(1 rows)",
+        }
+
+        local result = parser._parse_postgresql(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set
+        assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+        assert.equals(2, #result.result_sets[1].rows)
+
+        -- Second result set
+        assert.are.same({ "email" }, result.result_sets[2].headers)
+        assert.equals(1, #result.result_sets[2].rows)
+      end)
+
+      it("should NOT set multiple_results for single result set", function()
+        local lines = {
+          " id | name",
+          "----+-----",
+          "  1 | Alice",
+          "(1 rows)",
+        }
+
+        local result = parser._parse_postgresql(lines)
+
+        -- Single result set should NOT have multiple_results flag
+        assert.is_nil(result.multiple_results)
+        assert.are.same({ "id", "name" }, result.headers)
+        assert.equals(1, #result.rows)
+      end)
     end)
   end)
 

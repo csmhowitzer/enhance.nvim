@@ -2386,14 +2386,23 @@ local function handle_enter(line_num)
 		local is_already_connected = current_conn and current_conn.name == conn.name
 
 		if is_already_connected then
-			-- Already connected - just toggle expansion without reconnecting
+			-- Pressing <CR> on already-connected database → DISCONNECT and collapse
+			connections.disconnect()
 			local conn_key = "conn:" .. conn.name
-			expanded[conn_key] = not expanded[conn_key]
+			expanded[conn_key] = false  -- Collapse the tree
+			active_connection = nil  -- Clear active connection
 			refresh_explorer()
 			return
 		end
 
-		-- Not connected yet - test the connection
+		-- Different database or no connection
+		-- If there's a current connection, collapse its tree (disconnect happens via set_current)
+		if current_conn then
+			local old_conn_key = "conn:" .. current_conn.name
+			expanded[old_conn_key] = false  -- Collapse old tree
+		end
+
+		-- Test the new connection
 		vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
 		local executor = require("enhance.executor")
 		local success, error_msg = executor.test_connection(conn)
@@ -2440,7 +2449,7 @@ local function handle_enter(line_num)
 		end
 
 		local conn_key = "conn:" .. conn.name
-		expanded[conn_key] = not expanded[conn_key]
+		expanded[conn_key] = true  -- Always expand when connecting to new database
 
 		-- Refresh to show checkmark and expanded tree
 		refresh_explorer()
@@ -3298,5 +3307,12 @@ M.get_result_buffer_info = get_result_buffer_info
 M.get_query_buffer_for_result = get_query_buffer_for_result
 M.is_tmp_file = is_tmp_file
 M.refresh_explorer = refresh_explorer
+
+---Collapse a connection's tree
+---@param conn_name string Connection name
+function M.collapse_connection(conn_name)
+	local conn_key = "conn:" .. conn_name
+	expanded[conn_key] = false
+end
 
 return M

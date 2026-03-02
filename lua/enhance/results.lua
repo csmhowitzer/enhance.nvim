@@ -439,7 +439,8 @@ end
 
 ---Display a message in the results window (for errors, warnings, etc.)
 ---@param lines string[] Message lines to display
-function M.display_message(lines)
+---@param is_error boolean? Whether this is an error message (for red highlighting)
+function M.display_message(lines, is_error)
   -- Create message buffer
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].filetype = 'enhance-results'
@@ -467,6 +468,14 @@ function M.display_message(lines)
 
     -- Track the results window
     explorer.set_results_window(results_win)
+  end
+
+  -- Apply error highlighting if this is an error message
+  if is_error then
+    local config = require("enhance").get_config()
+    vim.schedule(function()
+      M.apply_error_highlighting(buf, config)
+    end)
   end
 
   -- Set keymaps

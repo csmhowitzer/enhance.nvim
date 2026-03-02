@@ -170,12 +170,20 @@ function M.parse_sqlserver(lines)
       -- Parse this result set
       local parsed = parse_single_sqlserver_result_set(result_set_lines)
 
-      -- Only include result sets that have data
-      if #parsed.headers > 0 or #parsed.rows > 0 then
+      -- Extract row count from marker line
+      local marker_line = lines[marker_idx]
+      local row_count = tonumber(marker_line:match("%((%d+) rows? affected%)"))
+
+      -- Include result sets that have data OR have a row count (DML statements)
+      -- DML statements (INSERT/UPDATE/DELETE) produce no headers/rows, only row count
+      if #parsed.headers > 0 or #parsed.rows > 0 or row_count then
         table.insert(result_sets, {
           headers = parsed.headers,
           rows = parsed.rows,
-          metadata = { db_type = "sqlserver" }
+          metadata = {
+            db_type = "sqlserver",
+            row_count = row_count  -- Individual row count for this statement
+          }
         })
       end
 
@@ -192,10 +200,22 @@ function M.parse_sqlserver(lines)
 
   -- Single result set - use existing logic
   local parsed = parse_single_sqlserver_result_set(lines)
+
+  -- Extract row count from marker line if present
+  local row_count = nil
+  local markers = find_all_rows_affected_markers(lines)
+  if #markers == 1 then
+    local marker_line = lines[markers[1]]
+    row_count = tonumber(marker_line:match("%((%d+) rows? affected%)"))
+  end
+
   return {
     headers = parsed.headers,
     rows = parsed.rows,
-    metadata = { db_type = "sqlserver" }
+    metadata = {
+      db_type = "sqlserver",
+      row_count = row_count  -- Individual row count for single statement
+    }
   }
 end
 

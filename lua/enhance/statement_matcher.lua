@@ -149,15 +149,23 @@ function M.match_statements(statements, parsed_output, metadata)
     -- INSERT/UPDATE/DELETE get message (no result set consumed)
     elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
       result.result_table = nil
-      result.rows = metadata.row_count or 0
-      result.message = generate_dml_message(stmt.type, result.rows)
-      -- Skip empty result set if present
+
+      -- Try to get row count from result set metadata (SQL Server individual count)
+      -- Fall back to global metadata.row_count if not available
+      local row_count = metadata.row_count or 0
       if result_set_index <= #parsed_output.result_sets then
         local result_set = parsed_output.result_sets[result_set_index]
+        if result_set.metadata and result_set.metadata.row_count then
+          row_count = result_set.metadata.row_count
+        end
+        -- Skip empty result set if present
         if #result_set.headers == 0 and #result_set.rows == 0 then
           result_set_index = result_set_index + 1
         end
       end
+
+      result.rows = row_count
+      result.message = generate_dml_message(stmt.type, result.rows)
     -- CREATE/DROP/ALTER get DDL message (no result set consumed)
     elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
       result.result_table = nil

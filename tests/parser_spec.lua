@@ -124,6 +124,46 @@ describe("parser", function()
         assert.are.same({ "id", "name" }, result.headers)
         assert.equals(1, #result.rows)
       end)
+
+      it("should extract row_count from '(X rows affected)' markers", function()
+        local lines = {
+          "id|name",
+          "--|----",
+          "1|Alice",
+          "2|Bob",
+          "(2 rows affected)",
+          "",
+          "email",
+          "-----",
+          "alice@test.com",
+          "(1 rows affected)",
+        }
+
+        local result = parser._parse_sqlserver(lines)
+
+        assert.is_true(result.multiple_results)
+        assert.equals(2, #result.result_sets)
+
+        -- First result set should have row_count = 2
+        assert.equals(2, result.result_sets[1].metadata.row_count)
+
+        -- Second result set should have row_count = 1
+        assert.equals(1, result.result_sets[2].metadata.row_count)
+      end)
+
+      it("should extract row_count for single result set", function()
+        local lines = {
+          "id|name",
+          "--|----",
+          "1|Alice",
+          "(1 rows affected)",
+        }
+
+        local result = parser._parse_sqlserver(lines)
+
+        -- Single result set should have row_count in metadata
+        assert.equals(1, result.metadata.row_count)
+      end)
     end)
   end)
 

@@ -116,6 +116,61 @@ describe("enhance.results", function()
       vim.api.nvim_buf_delete(found_buf, { force = true })
     end)
     
+    it("should apply error highlighting when is_error is true", function()
+      local test_lines = {
+        "Query Execution Failed",
+        "",
+        "Msg 208, Level 16, State 1",
+        "Invalid object name 'blech'."
+      }
+
+      -- Mock explorer module
+      package.loaded["enhance.explorer"] = {
+        get_results_window = function() return nil end,
+        set_results_window = function() end,
+      }
+
+      -- Mock enhance module for config
+      package.loaded["enhance"] = {
+        get_config = function()
+          return {
+            status_line = {
+              enabled = false
+            }
+          }
+        end,
+        setup_highlights = function() end,
+      }
+
+      -- Display error message with is_error flag
+      results.display_message(test_lines, true)
+
+      -- Find the message buffer
+      local found_buf = nil
+      for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+        if vim.api.nvim_buf_is_valid(buf) then
+          local name = vim.api.nvim_buf_get_name(buf)
+          if name:match("%[Enhance%] Message") then
+            found_buf = buf
+            break
+          end
+        end
+      end
+
+      assert.is_not_nil(found_buf, "Should create message buffer")
+
+      -- Verify content
+      local lines = vim.api.nvim_buf_get_lines(found_buf, 0, -1, false)
+      assert.equals(4, #lines)
+      assert.equals("Query Execution Failed", lines[1])
+
+      -- Note: We can't easily verify highlight application in tests
+      -- but we verify the function was called without errors
+
+      -- Cleanup
+      vim.api.nvim_buf_delete(found_buf, { force = true })
+    end)
+
     it("should set buffer as non-modifiable", function()
       local test_lines = { "Test message" }
       

@@ -873,6 +873,20 @@ local function execute_debatch_sqlserver(connection, groups, query_bufnr)
         total_duration = total_duration + duration
 
         if err then
+          -- Create error result (same as debatch group error handling)
+          local result = {
+            type = stmt.type,
+            query_text = stmt.text,
+            rows = 0,
+            elapsed = duration,
+            db_type = connection.type,
+            db_name = connection.database or connection.name,
+            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+            result_table = nil,
+            message = "ERROR: " .. err,
+            error = true,  -- Flag for error highlighting
+          }
+          table.insert(all_statement_results, result)
           had_error = true
           error_message = err
           break
@@ -906,34 +920,71 @@ local function execute_debatch_sqlserver(connection, groups, query_bufnr)
   end
 
   -- Format and display results
+  local formatter = require("enhance.formatter")
+  local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+
+  -- If there was an error, check if we need to append error message
+  -- (Don't append if formatter already included it in results)
   if had_error then
-    local error_display = {
-      "Query Execution Failed",
-      "",
-    }
-    -- Split error message by newlines to avoid nvim_buf_set_lines error
-    local error_text = error_message or "Unknown error"
-    for line in error_text:gmatch("[^\r\n]+") do
-      table.insert(error_display, line)
+    -- Check if last result is an error result (formatter already included error)
+    local last_result = all_statement_results[#all_statement_results]
+    local error_already_in_results = last_result and last_result.error == true
+
+    if not error_already_in_results then
+      -- Error not in results, append it
+      table.insert(formatted_lines, "")
+      table.insert(formatted_lines, "")
+      table.insert(formatted_lines, "Query Execution Failed")
+      table.insert(formatted_lines, "")
+
+      -- Split error message by newlines - ensure no embedded newlines
+      local error_text = error_message or "Unknown error"
+      local error_lines = vim.split(error_text, "\n", { plain = true, trimempty = false })
+      for _, line in ipairs(error_lines) do
+        table.insert(formatted_lines, line)
+      end
+
+      -- Add note about remaining statements
+      if #all_statement_results > 0 then
+        table.insert(formatted_lines, "")
+        table.insert(formatted_lines, "(Remaining statements not executed)")
+      end
     end
-    require("enhance.results").display_message(error_display, connection, query_bufnr)
-    vim.notify("Query execution failed", vim.log.levels.ERROR)
+  end
+
+  -- Safety check: ensure no lines contain newlines (nvim_buf_set_lines requirement)
+  local sanitized_lines = {}
+  for _, line in ipairs(formatted_lines) do
+    if type(line) == "string" and line:find("[\r\n]") then
+      -- Line contains newlines, split it
+      local split_lines = vim.split(line, "\n", { plain = true, trimempty = false })
+      for _, split_line in ipairs(split_lines) do
+        table.insert(sanitized_lines, split_line)
+      end
+    else
+      table.insert(sanitized_lines, line)
+    end
+  end
+  formatted_lines = sanitized_lines
+
+  -- Build metadata
+  local metadata = {
+    execution_time = total_duration,
+    row_count = total_table_rows or 0,
+    db_type = connection.type,
+    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+    connection_name = connection.name,
+    statement_count = #all_statement_results,
+    total_table_rows = total_table_rows,
+    is_error = had_error,  -- Flag for error highlighting
+    statement_results = all_statement_results,  -- Pass statement results for smart highlighting
+  }
+
+  require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
+
+  if had_error then
+    vim.notify("Query execution failed with partial results", vim.log.levels.WARN)
   else
-    local formatter = require("enhance.formatter")
-    local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
-
-    -- Build metadata
-    local metadata = {
-      execution_time = total_duration,
-      row_count = total_table_rows or 0,
-      db_type = connection.type,
-      timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-      connection_name = connection.name,
-      statement_count = #all_statement_results,
-      total_table_rows = total_table_rows,
-    }
-
-    require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
     vim.notify("Query executed successfully", vim.log.levels.INFO)
   end
 end

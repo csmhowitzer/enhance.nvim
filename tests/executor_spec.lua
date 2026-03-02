@@ -546,14 +546,16 @@ describe("enhance.executor", function()
         return nil, error_msg, 45.2, 0
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (debatch mode uses display, not display_message)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -570,10 +572,12 @@ describe("enhance.executor", function()
       executor._execute_sqlserver(connection, "INSERT INTO TestTable VALUES (1, 'Duplicate')")
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for constraint violations")
+      assert.is_true(display_called, "display should be called for constraint violations")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
-      -- Verify error details are included
+      assert.is_not_nil(displayed_metadata)
+      assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
+      -- Verify error details are included in output
+      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 2627", table.concat(displayed_lines, "\n"))
       assert.matches("PRIMARY KEY constraint", table.concat(displayed_lines, "\n"))
 
@@ -606,14 +610,16 @@ describe("enhance.executor", function()
         return nil, error_msg, 32.1, 0
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (debatch mode uses display, not display_message)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -630,9 +636,12 @@ describe("enhance.executor", function()
       executor._execute_sqlserver(connection, "CREATE TABLE TestTable (ID INT)")
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for DDL errors")
+      assert.is_true(display_called, "display should be called for DDL errors")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
+      assert.is_not_nil(displayed_metadata)
+      assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
+      -- Verify error details are included in output
+      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 2714", table.concat(displayed_lines, "\n"))
       assert.matches("already an object", table.concat(displayed_lines, "\n"))
 
@@ -750,14 +759,16 @@ describe("enhance.executor", function()
         end
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (debatch mode uses display, not display_message)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -774,10 +785,12 @@ describe("enhance.executor", function()
       executor._execute_sqlserver(connection, "INSERT INTO TestTable VALUES ('Test'); SELECT * FROM NonExistent;")
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for errors in mixed statements")
+      assert.is_true(display_called, "display should be called for errors in mixed statements")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
-      -- Verify error is included
+      assert.is_not_nil(displayed_metadata)
+      assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
+      -- Verify error details are included in output
+      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 208", table.concat(displayed_lines, "\n"))
       assert.matches("Invalid object name", table.concat(displayed_lines, "\n"))
 

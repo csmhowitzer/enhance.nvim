@@ -412,7 +412,7 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Apply error highlighting if this is an error display
   if metadata and metadata.is_error then
     vim.schedule(function()
-      M.apply_error_highlighting(buf, config)
+      M.apply_error_highlighting(buf, config, metadata)
     end)
   end
 
@@ -581,7 +581,8 @@ end
 ---Apply error highlighting to error messages
 ---@param bufnr number Buffer number
 ---@param config table Plugin configuration
-function M.apply_error_highlighting(bufnr, config)
+---@param metadata table? Execution metadata with statement_results
+function M.apply_error_highlighting(bufnr, config, metadata)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
@@ -592,13 +593,81 @@ function M.apply_error_highlighting(bufnr, config)
   -- Get all lines in buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- Determine data start line based on status line position
+  -- Strategy 1: If "Query Execution Failed" exists, highlight from there (Test 1 case)
+  local error_start_line = nil
+  for line_num = 0, #lines - 1 do
+    local line = lines[line_num + 1]  -- Lua is 1-indexed
+    if line and line:match("^Query Execution Failed") then
+      error_start_line = line_num
+      break
+    end
+  end
+
+  if error_start_line then
+    -- Highlight from "Query Execution Failed" to end of buffer
+    for line_num = error_start_line, #lines - 1 do
+      vim.api.nvim_buf_add_highlight(
+        bufnr,
+        ns_id,
+        'EnhanceError',
+        line_num,
+        0,
+        -1
+      )
+    end
+    return
+  end
+
+  -- Strategy 2: Use statement_results to find error result sets (Test 2 case)
+  if metadata and metadata.statement_results then
+    -- Find all "Result Set X/Y" lines and check if statement X has error flag
+    for line_num = 0, #lines - 1 do
+      local line = lines[line_num + 1]  -- Lua is 1-indexed
+      local result_set_num = line and line:match("^Result Set (%d+)/%d+")
+
+      if result_set_num then
+        local stmt_idx = tonumber(result_set_num)
+        local statement = metadata.statement_results[stmt_idx]
+
+        -- If this statement has error flag, highlight this result set
+        if statement and statement.error then
+          -- Highlight from line AFTER "Result Set X/Y" header until next "Result Set" or end
+          -- (Skip the header line to preserve its special highlighting)
+          local section_start = line_num + 1  -- Start after header line
+          local section_end = #lines - 1  -- Default to end of buffer
+
+          -- Find next "Result Set" line
+          for next_line_num = line_num + 1, #lines - 1 do
+            local next_line = lines[next_line_num + 1]
+            if next_line and next_line:match("^Result Set") then
+              section_end = next_line_num - 1  -- Stop before next result set
+              break
+            end
+          end
+
+          -- Highlight this error result set section (excluding header)
+          for hl_line_num = section_start, section_end do
+            vim.api.nvim_buf_add_highlight(
+              bufnr,
+              ns_id,
+              'EnhanceError',
+              hl_line_num,
+              0,
+              -1
+            )
+          end
+        end
+      end
+    end
+    return
+  end
+
+  -- Strategy 3: Fallback - highlight all lines after status line (old behavior)
   local data_start_line = 0
   if config.status_line and config.status_line.enabled and config.status_line.position == 'top' then
     data_start_line = 2  -- Skip status line (2 lines)
   end
 
-  -- Highlight all error lines (everything after status line)
   for line_num = data_start_line, #lines - 1 do
     vim.api.nvim_buf_add_highlight(
       bufnr,

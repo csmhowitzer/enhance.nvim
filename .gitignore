@@ -14,3 +14,15 @@ demo_*.lua
 .DS_Store
 Thumbs.db
 
+# Connection files (user-specific)
+connections.json
+
+# Development notes (if accidentally created in repo)
+*-dev-notes/
+*-planning.md
+*-notes.md
+
+# Temporary query files
+*.tmp.sql
+*.tmp
+

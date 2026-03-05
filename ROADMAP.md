@@ -34,6 +34,7 @@
 - Stored procedure support
 - Transaction management
 - Multi-connection queries
+- Temp table persistence (needs investigation and testing)
 
 ### Performance
 - Large result set optimization

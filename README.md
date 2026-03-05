@@ -343,6 +343,63 @@ id  name       email
 2   Jane Doe   jane@example.com
 ```
 
+**Multiple SELECT Statements** (batched execution with result set headers):
+```
+Statements: 2 | Rows: 7 | 15.43ms | example.db | sqlite | 2025-12-17 22:04:38
+─────────────────────────────────────────────────────────────────────────────
+Result Set 1/2 | Rows: 5
+
+id  name       email
+--  ---------  ------------------
+1   John Doe   john@example.com
+2   Jane Doe   jane@example.com
+
+Result Set 2/2 | Rows: 2
+
+count
+-----
+5
+```
+
+## Database-Specific Features
+
+### SQL Server
+
+enhance.nvim provides **full SSMS parity** for SQL Server with advanced features:
+
+- **Stop-on-Error Execution**: DML/DDL statements execute individually and stop on first error
+- **Individual Statement Timing**: Each DML/DDL statement shows its own execution time
+- **Batch Mode for SELECT**: Multiple SELECT statements execute together for performance
+- **Smart Error Detection**: Detects errors even when `sqlcmd` exit code is 0
+- **Data-Driven Highlighting**: Error messages highlighted in red automatically
+- **Row Count Extraction**: Shows affected rows for INSERT/UPDATE/DELETE operations
+
+**Example - Multiple DML Statements:**
+```sql
+UPDATE Users SET status = 'active' WHERE id = 1;
+DELETE FROM Sessions WHERE expired = 1;
+INSERT INTO AuditLog (action, timestamp) VALUES ('cleanup', GETDATE());
+```
+
+**Output:**
+```
+Statements: 3 | Rows: 15 | 45.23ms | ProductionDB | sqlserver | 2025-12-17 22:04:38
+────────────────────────────────────────────────────────────────────────────────────
+✓ Updated 1 row | 12.34ms
+
+✓ Deleted 10 rows | 18.45ms
+
+✓ Inserted 1 row | 14.44ms
+```
+
+### SQLite, MySQL, PostgreSQL
+
+All databases support:
+- Multiple SELECT statement batching with result set headers
+- DML/DDL success messages with row counts
+- Error detection and highlighting
+- Auto-refresh on DDL operations
+
 ## Customization
 
 ### Syntax Highlighting

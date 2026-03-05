@@ -52,14 +52,17 @@ cat test_output.log
 
 ### Test Coverage
 
-The test suite includes 67 tests covering:
+The test suite includes 252 tests across 16 test modules covering:
 - Configuration validation and merging
-- Connection management
+- Connection management and parsing
 - Plugin initialization and commands
-- Explorer tree building and icon handling
-- Query execution logic
-- Database-specific executor routing
-- Results display and formatting
+- Explorer tree building, parsing, and icon handling
+- Query execution logic and statement detection
+- Database-specific executor routing (SQLite, SQL Server, MySQL, PostgreSQL)
+- Results display, formatting, and JSON detection
+- Statement classification, parsing, and matching
+- Debatch execution for DML/DDL statements
+- Bug fixes and regression prevention
 
 ### Writing Tests
 

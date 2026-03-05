@@ -30,7 +30,7 @@ Features:
 - File management: tmp buffers, saved queries, result tracking
 - Bulk operations: delete multiple files with visual selection
 - Comprehensive health check diagnostics
-- Production-ready with 67 passing tests
+- Production-ready with 252 passing tests
 
 ==============================================================================
 2. INSTALLATION                                        *enhance-installation*
@@ -39,20 +39,14 @@ Using lazy.nvim:
 
 >lua
     {
-      "yourusername/enhance.nvim",
+      "kristijanhusak/vim-dadbod",  -- required
+      "kristijanhusak/vim-dadbod-completion",  -- optional
+      "csmhowitzer/enhance.nvim",
       config = function()
         require("enhance").setup({
           enabled = true,
-          connections = {
-            {
-              name = "Production DB",
-              type = "sqlserver",
-              host = "localhost",
-              database = "MyDatabase",
-              user = "sa",
-              password = "YourPassword",
-            }
-          },
+          -- connections_file is optional - defaults to:
+          -- ~/.local/share/enhance/connections.json
         })
       end,
     }
@@ -67,13 +61,29 @@ For local development:
       build = ":helptags doc",
       config = function()
         require("enhance").setup({
-          connections = {
-            { name = "Local DB", type = "sqlite", path = "~/myapp.db" }
-          }
+          enabled = true,
+          connections_file = "~/.local/share/enhance/connections.json",
         })
       end,
     }
 <
+
+Create connections file at `~/.local/share/enhance/connections.json`:
+
+>json
+    [
+      {
+        "name": "Local SQLite",
+        "url": "sqlite:/Users/yourusername/example.db"
+      },
+      {
+        "name": "Production SQL Server",
+        "url": "sqlserver://server.example.com/ProductionDB;user=admin;password=secret;TrustServerCertificate=yes;"
+      }
+    ]
+<
+
+See |enhance-database-types| for connection URL formats.
 
 ==============================================================================
 3. CONFIGURATION                                      *enhance-configuration*

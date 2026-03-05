@@ -952,20 +952,7 @@ local function execute_debatch_sqlserver(connection, groups, query_bufnr)
     end
   end
 
-  -- Safety check: ensure no lines contain newlines (nvim_buf_set_lines requirement)
-  local sanitized_lines = {}
-  for _, line in ipairs(formatted_lines) do
-    if type(line) == "string" and line:find("[\r\n]") then
-      -- Line contains newlines, split it
-      local split_lines = vim.split(line, "\n", { plain = true, trimempty = false })
-      for _, split_line in ipairs(split_lines) do
-        table.insert(sanitized_lines, split_line)
-      end
-    else
-      table.insert(sanitized_lines, line)
-    end
-  end
-  formatted_lines = sanitized_lines
+  -- Note: Newlines are now handled at the source (formatter splits statement.message by newlines)
 
   -- Build metadata
   local metadata = {
@@ -1094,16 +1081,128 @@ function M.execute_sqlserver(connection, query, query_bufnr)
       end
 
       if has_sql_error then
-        -- Display SQL error from output
-        local error_display = {
-          "Query Execution Failed",
-          "",
-        }
+        -- Parse output to separate successful results from errors
+        -- Use same approach as debatch mode for consistent formatting
+        local statement_detector = require("enhance.statement_detector")
+        local detected_statements = statement_detector.detect_statements(query)
+
+        -- Parse the output (may contain partial results before error)
+        local parser = require("enhance.parser")
+        local parsed_result = parser.parse(output_lines, connection.type)
+
+        -- Build statement results with error detection
+        local all_statement_results = {}
+        local error_found = false
+        local error_lines_text = {}
+
+        -- Collect error message lines
+        local in_error = false
         for _, line in ipairs(output_lines) do
-          table.insert(error_display, line)
+          if line:match("Msg %d+, Level %d+") then
+            in_error = true
+          end
+          if in_error then
+            table.insert(error_lines_text, line)
+          end
         end
+
+        -- Match statements to results (if we have parsed results)
+        local has_successful_results = false
+
+        -- Check for multiple result sets
+        if parsed_result and parsed_result.multiple_results and #parsed_result.result_sets > 0 then
+          has_successful_results = true
+        -- Check for single result set with data
+        elseif parsed_result and parsed_result.headers and #parsed_result.headers > 0 and parsed_result.rows and #parsed_result.rows > 0 then
+          has_successful_results = true
+          -- Convert single result to multiple_results format for consistent processing
+          parsed_result = {
+            multiple_results = true,
+            result_sets = {
+              {
+                headers = parsed_result.headers,
+                rows = parsed_result.rows,
+                metadata = parsed_result.metadata or {}
+              }
+            },
+            metadata = parsed_result.metadata or { db_type = connection.type }
+          }
+        end
+
+        if has_successful_results then
+          -- We have some successful results before the error
+          -- Format successful results directly without statement matching
+          -- (statement matching would create empty results for unmatched statements)
+          local formatter = require("enhance.formatter")
+
+          -- Create statement results from parsed result sets
+          for i, result_set in ipairs(parsed_result.result_sets) do
+            local result = {
+              type = "SELECT",
+              query_text = "",
+              rows = #result_set.rows,
+              elapsed = 0,  -- Batch mode doesn't show individual elapsed times
+              db_type = connection.type,
+              db_name = connection.database or connection.name,
+              executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+              result_table = {
+                headers = result_set.headers,
+                rows = result_set.rows,
+              },
+            }
+            table.insert(all_statement_results, result)
+          end
+
+          -- Add error result for the failed statement (with ERROR: prefix like debatch mode)
+          local error_result = {
+            type = "SELECT",
+            query_text = "",
+            rows = 0,
+            elapsed = 0,
+            db_type = connection.type,
+            db_name = connection.database or connection.name,
+            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+            result_table = nil,
+            message = "ERROR: " .. table.concat(error_lines_text, "\n"),
+            error = true,
+          }
+          table.insert(all_statement_results, error_result)
+        else
+          -- No successful results, just error (with ERROR: prefix like debatch mode)
+          local error_result = {
+            type = "SELECT",
+            query_text = query,
+            rows = 0,
+            elapsed = duration,
+            db_type = connection.type,
+            db_name = connection.database or connection.name,
+            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+            result_table = nil,
+            message = "ERROR: " .. table.concat(error_lines_text, "\n"),
+            error = true,
+          }
+          table.insert(all_statement_results, error_result)
+        end
+
+        -- Format using the same formatter as debatch mode
+        local formatter = require("enhance.formatter")
+        local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+
+        -- Build metadata with statement_results for data-driven highlighting
+        local metadata = {
+          execution_time = duration,
+          row_count = total_table_rows or 0,
+          db_type = connection.type,
+          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+          connection_name = connection.name,
+          statement_count = #all_statement_results,
+          total_table_rows = total_table_rows,
+          is_error = true,
+          statement_results = all_statement_results,
+        }
+
         vim.notify("Query execution failed", vim.log.levels.ERROR)
-        require("enhance.results").display_message(error_display, true)
+        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
         return
       end
 

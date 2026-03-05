@@ -264,8 +264,12 @@ local function format_single_statement(statement, statement_num, total_statement
       table.insert(lines, line)
     end
   elseif statement.message then
-    -- INSERT/UPDATE/DELETE/CREATE/DROP/ALTER: show message
-    table.insert(lines, statement.message)
+    -- INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ERROR: show message
+    -- Split by newlines to handle multi-line messages (e.g., SQL Server errors)
+    local message_lines = vim.split(statement.message, "\n", { plain = true, trimempty = false })
+    for _, line in ipairs(message_lines) do
+      table.insert(lines, line)
+    end
   end
 
   -- No status line at the bottom for multiple statements

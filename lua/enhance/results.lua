@@ -593,33 +593,23 @@ function M.apply_error_highlighting(bufnr, config, metadata)
   -- Get all lines in buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- Strategy 1: If "Query Execution Failed" exists, highlight from there (Test 1 case)
-  local error_start_line = nil
-  for line_num = 0, #lines - 1 do
-    local line = lines[line_num + 1]  -- Lua is 1-indexed
-    if line and line:match("^Query Execution Failed") then
-      error_start_line = line_num
-      break
-    end
-  end
-
-  if error_start_line then
-    -- Highlight from "Query Execution Failed" to end of buffer
-    for line_num = error_start_line, #lines - 1 do
-      vim.api.nvim_buf_add_highlight(
-        bufnr,
-        ns_id,
-        'EnhanceError',
-        line_num,
-        0,
-        -1
-      )
-    end
-    return
-  end
-
-  -- Strategy 2: Use statement_results to find error result sets (Test 2 case)
+  -- Data-driven approach: Use metadata.statement_results to determine what to highlight
   if metadata and metadata.statement_results then
+    -- Check if we have a single error result (Scenario 6 case)
+    if #metadata.statement_results == 1 and metadata.statement_results[1].error then
+      -- Single error result: highlight everything after the status line (line 0) and separator (line 1)
+      for line_num = 2, #lines - 1 do
+        vim.api.nvim_buf_add_highlight(
+          bufnr,
+          ns_id,
+          'EnhanceError',
+          line_num,
+          0,
+          -1
+        )
+      end
+      return
+    end
     -- Find all "Result Set X/Y" lines and check if statement X has error flag
     for line_num = 0, #lines - 1 do
       local line = lines[line_num + 1]  -- Lua is 1-indexed

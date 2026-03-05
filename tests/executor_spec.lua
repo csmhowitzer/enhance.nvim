@@ -409,14 +409,16 @@ describe("enhance.executor", function()
         return 1
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (new formatter-based approach)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -442,11 +444,16 @@ describe("enhance.executor", function()
       exit_callback(nil, 0)
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for SQL errors")
+      assert.is_true(display_called, "display should be called for SQL errors")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
-      assert.matches("Msg 208", displayed_lines[3])
-      assert.matches("Invalid object name", displayed_lines[4])
+      assert.is_not_nil(displayed_metadata)
+      -- Verify metadata has error flag and statement_results
+      assert.is_true(displayed_metadata.is_error)
+      assert.is_not_nil(displayed_metadata.statement_results)
+      -- Verify formatted output contains error message
+      local output_text = table.concat(displayed_lines, "\n")
+      assert.matches("Msg 208", output_text)
+      assert.matches("Invalid object name", output_text)
 
       -- Verify notification was shown
       assert.is_true(notify_called, "vim.notify should be called for SQL errors")
@@ -477,14 +484,16 @@ describe("enhance.executor", function()
         return 1
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (new formatter-based approach)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -510,11 +519,15 @@ describe("enhance.executor", function()
       exit_callback(nil, 0)
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for syntax errors")
+      assert.is_true(display_called, "display should be called for syntax errors")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
-      assert.matches("Msg 102", displayed_lines[3])
-      assert.matches("Incorrect syntax", displayed_lines[4])
+      assert.is_not_nil(displayed_metadata)
+      -- Verify metadata has error flag
+      assert.is_true(displayed_metadata.is_error)
+      -- Verify formatted output contains error message
+      local output_text = table.concat(displayed_lines, "\n")
+      assert.matches("Msg 102", output_text)
+      assert.matches("Incorrect syntax", output_text)
 
       -- Verify notification was shown
       assert.is_true(notify_called, "vim.notify should be called for syntax errors")
@@ -576,8 +589,8 @@ describe("enhance.executor", function()
       assert.is_not_nil(displayed_lines)
       assert.is_not_nil(displayed_metadata)
       assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
-      -- Verify error details are included in output
-      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
+      -- Verify error details are included in output (now uses "ERROR:" prefix)
+      assert.matches("ERROR:", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 2627", table.concat(displayed_lines, "\n"))
       assert.matches("PRIMARY KEY constraint", table.concat(displayed_lines, "\n"))
 
@@ -640,8 +653,8 @@ describe("enhance.executor", function()
       assert.is_not_nil(displayed_lines)
       assert.is_not_nil(displayed_metadata)
       assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
-      -- Verify error details are included in output
-      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
+      -- Verify error details are included in output (now uses "ERROR:" prefix)
+      assert.matches("ERROR:", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 2714", table.concat(displayed_lines, "\n"))
       assert.matches("already an object", table.concat(displayed_lines, "\n"))
 
@@ -674,14 +687,16 @@ describe("enhance.executor", function()
         return 1
       end
 
-      -- Mock results.display_message
-      local display_message_called = false
+      -- Mock results.display (new formatter-based approach)
+      local display_called = false
       local displayed_lines
+      local displayed_metadata
       local original_results = package.loaded["enhance.results"]
       package.loaded["enhance.results"] = {
-        display_message = function(lines)
-          display_message_called = true
+        display = function(lines, conn, bufnr, metadata)
+          display_called = true
           displayed_lines = lines
+          displayed_metadata = metadata
         end
       }
 
@@ -711,15 +726,20 @@ describe("enhance.executor", function()
       exit_callback(nil, 0)
 
       -- Verify SQL error was detected and displayed
-      assert.is_true(display_message_called, "display_message should be called for errors with partial success")
+      assert.is_true(display_called, "display should be called for errors with partial success")
       assert.is_not_nil(displayed_lines)
-      assert.equals("Query Execution Failed", displayed_lines[1])
-      -- Verify partial success data is included in output
-      assert.matches("Name|Email", table.concat(displayed_lines, "\n"))
-      assert.matches("Test1", table.concat(displayed_lines, "\n"))
+      assert.is_not_nil(displayed_metadata)
+      -- Verify metadata has error flag
+      assert.is_true(displayed_metadata.is_error)
+      -- Verify partial success data is included in formatted output (formatted table, not raw)
+      local output_text = table.concat(displayed_lines, "\n")
+      assert.matches("Name", output_text)  -- Header should be in formatted table
+      assert.matches("Email", output_text)  -- Header should be in formatted table
+      assert.matches("Test1", output_text)  -- Data should be present
+      assert.matches("test1@example%.com", output_text)  -- Data should be present
       -- Verify error is included
-      assert.matches("Msg 208", table.concat(displayed_lines, "\n"))
-      assert.matches("Invalid object name", table.concat(displayed_lines, "\n"))
+      assert.matches("Msg 208", output_text)
+      assert.matches("Invalid object name", output_text)
 
       -- Verify notification was shown
       assert.is_true(notify_called, "vim.notify should be called for errors")
@@ -789,8 +809,8 @@ describe("enhance.executor", function()
       assert.is_not_nil(displayed_lines)
       assert.is_not_nil(displayed_metadata)
       assert.is_true(displayed_metadata.is_error, "metadata should indicate error")
-      -- Verify error details are included in output
-      assert.matches("Query Execution Failed", table.concat(displayed_lines, "\n"))
+      -- Verify error details are included in output (now uses "ERROR:" prefix)
+      assert.matches("ERROR:", table.concat(displayed_lines, "\n"))
       assert.matches("Msg 208", table.concat(displayed_lines, "\n"))
       assert.matches("Invalid object name", table.concat(displayed_lines, "\n"))
 

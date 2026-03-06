@@ -3,6 +3,11 @@
 
 local M = {}
 
+local sqlite_adapter    = require("enhance.db.sqlite")
+local sqlserver_adapter = require("enhance.db.sqlserver")
+local mysql_adapter     = require("enhance.db.mysql")
+local postgres_adapter  = require("enhance.db.postgres")
+
 ---Count rows from query output and remove footer lines
 ---Handles both SELECT queries (counts data rows) and DML queries (parses "rows affected")
 ---Modifies output_lines in place to remove database footer messages
@@ -70,65 +75,12 @@ local function count_rows(output_lines, db_type)
   return row_count
 end
 
----Build a sqlcmd command array for a SQL Server connection
----@class SqlcmdOptions
----@field query string Inline query string for -Q flag
----@field format boolean? Include -s/-W/-y output-formatting flags (default: true)
----@field no_headers boolean? Suppress column headers with -h -1 (default: false)
----
+---Build a sqlcmd command array (delegates to sqlserver adapter)
 ---@param connection table SQL Server connection
----@param opts SqlcmdOptions
----@return string[] Command array ready for vim.fn.system / vim.fn.jobstart
+---@param opts table SqlcmdOptions
+---@return string[] Command array
 local function build_sqlcmd_cmd(connection, opts)
-  local cmd = { 'sqlcmd' }
-
-  -- Server / database
-  if connection.server or connection.host then
-    table.insert(cmd, '-S')
-    table.insert(cmd, connection.server or connection.host)
-  end
-  if connection.database then
-    table.insert(cmd, '-d')
-    table.insert(cmd, connection.database)
-  end
-
-  -- Authentication
-  if connection.user or connection.username then
-    table.insert(cmd, '-U')
-    table.insert(cmd, connection.user or connection.username)
-    if connection.password then
-      table.insert(cmd, '-P')
-      table.insert(cmd, connection.password)
-    end
-  else
-    table.insert(cmd, '-E') -- Windows Authentication
-  end
-
-  -- Trust server certificate (for self-signed certs in dev/test environments)
-  if connection.trust_server_certificate ~= false then
-    table.insert(cmd, '-C')
-  end
-
-  -- Output formatting flags (pipe separator, trim spaces, wide column width)
-  if opts.format ~= false then
-    table.insert(cmd, '-s')
-    table.insert(cmd, '|')
-    table.insert(cmd, '-W')
-    table.insert(cmd, '-y')
-    table.insert(cmd, '8000')
-  end
-
-  -- Suppress headers (used for connection tests)
-  if opts.no_headers then
-    table.insert(cmd, '-h')
-    table.insert(cmd, '-1')
-  end
-
-  -- Inline query
-  table.insert(cmd, '-Q')
-  table.insert(cmd, opts.query)
-
-  return cmd
+  return sqlserver_adapter.build_cmd(connection, opts)
 end
 
 ---Test database connection
@@ -139,106 +91,16 @@ function M.test_connection(connection)
   local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
   if db_type == "sqlite" then
-    -- Test SQLite connection
-    local db_path = vim.fn.expand(connection.path)
-    if vim.fn.filereadable(db_path) == 0 then
-      return false, "Database file not found: " .. db_path
-    end
-
-    -- Try to query the database
-    local output = vim.fn.system({
-      'sqlite3',
-      db_path,
-      'SELECT 1;'
-    })
-
-    if vim.v.shell_error ~= 0 then
-      return false, "Failed to connect to SQLite database: " .. output
-    end
-
-    return true, nil
+    return sqlite_adapter.test_connection(connection)
 
   elseif db_type == "sqlserver" or db_type == "mssql" then
-    local cmd = build_sqlcmd_cmd(connection, { query = "SELECT 1;", format = false, no_headers = true })
-    local output = vim.fn.system(cmd)
-
-    if vim.v.shell_error ~= 0 then
-      return false, "Failed to connect to SQL Server: " .. output
-    end
-
-    return true, nil
+    return sqlserver_adapter.test_connection(connection)
 
   elseif db_type == "mysql" or db_type == "mariadb" then
-    -- Test MySQL connection
-    local cmd = {
-      'mysql',
-      '-h', connection.host or 'localhost',
-      '-D', connection.database,
-    }
-
-    if connection.user then
-      table.insert(cmd, '-u')
-      table.insert(cmd, connection.user)
-    end
-
-    if connection.password then
-      table.insert(cmd, '-p' .. connection.password)
-    end
-
-    table.insert(cmd, '-e')
-    table.insert(cmd, 'SELECT 1;')
-
-    local output = vim.fn.system(cmd)
-
-    if vim.v.shell_error ~= 0 then
-      return false, "Failed to connect to MySQL: " .. output
-    end
-
-    return true, nil
+    return mysql_adapter.test_connection(connection)
 
   elseif db_type == "postgres" or db_type == "postgresql" then
-    -- Test PostgreSQL connection
-    local cmd = {
-      'psql',
-      '-h', connection.host or 'localhost',
-      '-d', connection.database,
-    }
-
-    -- Add port if specified
-    if connection.port then
-      table.insert(cmd, '-p')
-      table.insert(cmd, tostring(connection.port))
-    end
-
-    if connection.user then
-      table.insert(cmd, '-U')
-      table.insert(cmd, connection.user)
-    end
-
-    -- Handle password
-    if connection.password then
-      -- Set PGPASSWORD environment variable
-      vim.fn.setenv('PGPASSWORD', connection.password)
-    else
-      -- No password - add -w flag to prevent password prompt
-      table.insert(cmd, '-w')
-    end
-
-    table.insert(cmd, '-c')
-    table.insert(cmd, 'SELECT 1;')
-
-    local output = vim.fn.system(cmd)
-
-    -- Clear password from environment
-    if connection.password then
-      vim.fn.setenv('PGPASSWORD', nil)
-    end
-
-    if vim.v.shell_error ~= 0 then
-      return false, "Failed to connect to PostgreSQL: " .. output
-    end
-
-    return true, nil
+    return postgres_adapter.test_connection(connection)
   end
 
   return false, "Unsupported database type: " .. connection.type
@@ -264,20 +126,7 @@ function M.execute(connection, query, query_bufnr)
   end
 end
 
----Detect if a SQLite statement is DML and append SELECT changes() if needed
----@param statement_text string SQL statement text
----@return boolean is_dml True for INSERT/UPDATE/DELETE
----@return string exec_query Statement ready for execution (changes() appended for DML)
-local function prepare_sqlite_query(statement_text)
-  local trimmed = statement_text:upper():gsub("^%s+", "")
-  local is_dml = trimmed:match("^INSERT%s") ~= nil or
-                 trimmed:match("^UPDATE%s") ~= nil or
-                 trimmed:match("^DELETE%s") ~= nil
-  local exec_query = is_dml and (statement_text .. "; SELECT changes();") or statement_text
-  return is_dml, exec_query
-end
-
----Execute a single SQLite statement and return parsed result
+---Execute a single SQLite statement and return parsed result (delegates to sqlite adapter)
 ---@param connection table SQLite connection
 ---@param statement_text string Single SQL statement
 ---@return table|nil Parsed result or nil on error
@@ -285,62 +134,7 @@ end
 ---@return number Execution time in milliseconds
 ---@return number Row count
 local function execute_single_sqlite_statement(connection, statement_text)
-  local output_lines = {}
-  local error_lines = {}
-  local start_time = vim.loop.hrtime()
-
-  -- Expand path
-  local db_path = vim.fn.expand(connection.path)
-
-  local is_dml, exec_query = prepare_sqlite_query(statement_text)
-
-  -- Execute synchronously using vim.fn.system
-  local cmd = string.format("sqlite3 %s -column -header %s",
-    vim.fn.shellescape(db_path),
-    vim.fn.shellescape(exec_query))
-
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
-
-  local end_time = vim.loop.hrtime()
-  local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
-
-  -- Split output into lines
-  for line in output:gmatch("[^\r\n]+") do
-    if line ~= "" then
-      table.insert(output_lines, line)
-    end
-  end
-
-  if exit_code ~= 0 then
-    return nil, output, duration, 0
-  end
-
-  local row_count = 0
-
-  -- For DML statements, extract the changes() result from the last line
-  if is_dml and #output_lines > 0 then
-    local last_line = output_lines[#output_lines]
-    local changes = tonumber(last_line)
-    if changes then
-      row_count = changes
-      -- Remove the changes() output lines (header + separator + value)
-      if #output_lines >= 3 then
-        table.remove(output_lines) -- Remove value
-        table.remove(output_lines) -- Remove separator
-        table.remove(output_lines) -- Remove header
-      end
-    end
-  else
-    -- For SELECT queries, count rows using unified logic
-    row_count = count_rows(output_lines, connection.type)
-  end
-
-  -- Parse the output
-  local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, connection.type)
-
-  return parsed_result, nil, duration, row_count
+  return sqlite_adapter.execute_single(connection, statement_text)
 end
 
 ---Build a statement result object with a consistent structure
@@ -508,7 +302,7 @@ function M.execute_sqlite(connection, query, query_bufnr)
   -- Continue with existing batch execution for batch mode
 
   local query_upper = query:upper()
-  local is_dml, exec_query = prepare_sqlite_query(query)
+  local is_dml, exec_query = sqlite_adapter.prepare_query(query)
 
   -- Collect errors for display in results window
   local error_lines = {}
@@ -674,68 +468,15 @@ function M.execute_sqlite(connection, query, query_bufnr)
   })
 end
 
----Execute a single SQL Server statement
+---Execute a single SQL Server statement (delegates to sqlserver adapter)
 ---@param connection table SQL Server connection
 ---@param statement_text string Single SQL statement
----@return table|nil Parsed result or nil on error
----@return string|nil Error message if execution failed
----@return number Execution time in milliseconds
----@return number Row count
+---@return table|nil parsed_result
+---@return string|nil error_msg
+---@return number duration milliseconds
+---@return number row_count
 local function execute_single_sqlserver_statement(connection, statement_text)
-  local start_time = vim.loop.hrtime()
-
-  local cmd = build_sqlcmd_cmd(connection, { query = statement_text })
-
-  -- Execute synchronously
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
-
-  local end_time = vim.loop.hrtime()
-  local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
-
-  -- Split output into lines
-  local output_lines = {}
-  for line in output:gmatch("[^\r\n]+") do
-    if line ~= "" then
-      table.insert(output_lines, line)
-    end
-  end
-
-  -- Check for SQL errors in output (sqlcmd returns 0 even for SQL errors)
-  local has_sql_error = false
-  for _, line in ipairs(output_lines) do
-    if line:match("Msg %d+, Level %d+") then
-      has_sql_error = true
-      break
-    end
-  end
-
-  if has_sql_error then
-    -- Return error with full output
-    local error_text = table.concat(output_lines, "\n")
-    return nil, error_text, duration, 0
-  end
-
-  if exit_code ~= 0 then
-    -- Return error from stderr or exit code
-    return nil, output, duration, 0
-  end
-
-  -- Extract row count from "(X rows affected)" markers
-  local row_count = 0
-  for _, line in ipairs(output_lines) do
-    local count = line:match("%((%d+) rows? affected%)")
-    if count then
-      row_count = tonumber(count) or 0
-      break
-    end
-  end
-
-  -- Parse output using existing parser
-  local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, "sqlserver")
-
-  return parsed_result, nil, duration, row_count
+  return sqlserver_adapter.execute_single(connection, statement_text)
 end
 
 ---Execute SQL Server statements individually (de-batched)
@@ -1007,33 +748,7 @@ function M.execute_mysql(connection, query, query_bufnr)
 
   vim.notify("Executing MySQL query...", vim.log.levels.INFO)
 
-  local cmd = { 'mysql' }
-
-  if connection.host then
-    table.insert(cmd, '-h')
-    table.insert(cmd, connection.host)
-  end
-
-  if connection.port then
-    table.insert(cmd, '-P')
-    table.insert(cmd, tostring(connection.port))
-  end
-
-  if connection.user or connection.username then
-    table.insert(cmd, '-u')
-    table.insert(cmd, connection.user or connection.username)
-  end
-
-  if connection.password then
-    table.insert(cmd, '-p' .. connection.password)
-  end
-
-  if connection.database then
-    table.insert(cmd, connection.database)
-  end
-
-  table.insert(cmd, '-e')
-  table.insert(cmd, query)
+  local cmd = mysql_adapter.build_cmd(connection, { query = query })
 
   vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -1118,36 +833,12 @@ function M.execute_postgres(connection, query, query_bufnr)
 
   vim.notify("Executing PostgreSQL query...", vim.log.levels.INFO)
 
-  -- Build command with individual flags (like test_connection does)
-  local cmd = {
-    'psql',
-    '-h', connection.host or 'localhost',
-    '-d', connection.database,
-  }
-
-  -- Add port if specified
-  if connection.port then
-    table.insert(cmd, '-p')
-    table.insert(cmd, tostring(connection.port))
-  end
-
-  -- Add user if specified
-  if connection.user or connection.username then
-    table.insert(cmd, '-U')
-    table.insert(cmd, connection.user or connection.username)
-  end
-
-  -- Handle password via environment variable
+  -- Set PGPASSWORD before building cmd (adapter.build_cmd omits -w when password present)
   if connection.password then
     vim.fn.setenv('PGPASSWORD', connection.password)
-  else
-    -- No password - add -w flag to prevent password prompt
-    table.insert(cmd, '-w')
   end
 
-  -- Add query
-  table.insert(cmd, '-c')
-  table.insert(cmd, query)
+  local cmd = postgres_adapter.build_cmd(connection, { query = query })
 
   vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -1251,7 +942,7 @@ M._execute_single_sqlite_statement = execute_single_sqlite_statement
 M._execute_debatch_sqlite = execute_debatch_sqlite
 M._execute_single_sqlserver_statement = execute_single_sqlserver_statement
 M._execute_debatch_sqlserver = execute_debatch_sqlserver
-M._prepare_sqlite_query = prepare_sqlite_query
+M._prepare_sqlite_query = sqlite_adapter.prepare_query
 M._build_sqlcmd_cmd = build_sqlcmd_cmd
 M._parse_batch_error_output = parse_batch_error_output
 

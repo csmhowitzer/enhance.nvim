@@ -70,6 +70,67 @@ local function count_rows(output_lines, db_type)
   return row_count
 end
 
+---Build a sqlcmd command array for a SQL Server connection
+---@class SqlcmdOptions
+---@field query string Inline query string for -Q flag
+---@field format boolean? Include -s/-W/-y output-formatting flags (default: true)
+---@field no_headers boolean? Suppress column headers with -h -1 (default: false)
+---
+---@param connection table SQL Server connection
+---@param opts SqlcmdOptions
+---@return string[] Command array ready for vim.fn.system / vim.fn.jobstart
+local function build_sqlcmd_cmd(connection, opts)
+  local cmd = { 'sqlcmd' }
+
+  -- Server / database
+  if connection.server or connection.host then
+    table.insert(cmd, '-S')
+    table.insert(cmd, connection.server or connection.host)
+  end
+  if connection.database then
+    table.insert(cmd, '-d')
+    table.insert(cmd, connection.database)
+  end
+
+  -- Authentication
+  if connection.user or connection.username then
+    table.insert(cmd, '-U')
+    table.insert(cmd, connection.user or connection.username)
+    if connection.password then
+      table.insert(cmd, '-P')
+      table.insert(cmd, connection.password)
+    end
+  else
+    table.insert(cmd, '-E') -- Windows Authentication
+  end
+
+  -- Trust server certificate (for self-signed certs in dev/test environments)
+  if connection.trust_server_certificate ~= false then
+    table.insert(cmd, '-C')
+  end
+
+  -- Output formatting flags (pipe separator, trim spaces, wide column width)
+  if opts.format ~= false then
+    table.insert(cmd, '-s')
+    table.insert(cmd, '|')
+    table.insert(cmd, '-W')
+    table.insert(cmd, '-y')
+    table.insert(cmd, '8000')
+  end
+
+  -- Suppress headers (used for connection tests)
+  if opts.no_headers then
+    table.insert(cmd, '-h')
+    table.insert(cmd, '-1')
+  end
+
+  -- Inline query
+  table.insert(cmd, '-Q')
+  table.insert(cmd, opts.query)
+
+  return cmd
+end
+
 ---Test database connection
 ---@param connection table Database connection
 ---@return boolean success True if connection successful
@@ -98,35 +159,7 @@ function M.test_connection(connection)
     return true, nil
 
   elseif db_type == "sqlserver" or db_type == "mssql" then
-    -- Test SQL Server connection
-    local cmd = {
-      'sqlcmd',
-      '-S', connection.server or connection.host,
-      '-d', connection.database,
-    }
-
-    if connection.user or connection.username then
-      table.insert(cmd, '-U')
-      table.insert(cmd, connection.user or connection.username)
-      if connection.password then
-        table.insert(cmd, '-P')
-        table.insert(cmd, connection.password)
-      end
-    else
-      table.insert(cmd, '-E') -- Windows authentication
-    end
-
-    -- Trust server certificate (for self-signed certs)
-    -- Default to true for compatibility with most dev/test environments
-    if connection.trust_server_certificate ~= false then
-      table.insert(cmd, '-C')
-    end
-
-    table.insert(cmd, '-Q')
-    table.insert(cmd, 'SELECT 1;')
-    table.insert(cmd, '-h')
-    table.insert(cmd, '-1') -- Remove headers
-
+    local cmd = build_sqlcmd_cmd(connection, { query = "SELECT 1;", format = false, no_headers = true })
     local output = vim.fn.system(cmd)
 
     if vim.v.shell_error ~= 0 then
@@ -231,6 +264,19 @@ function M.execute(connection, query, query_bufnr)
   end
 end
 
+---Detect if a SQLite statement is DML and append SELECT changes() if needed
+---@param statement_text string SQL statement text
+---@return boolean is_dml True for INSERT/UPDATE/DELETE
+---@return string exec_query Statement ready for execution (changes() appended for DML)
+local function prepare_sqlite_query(statement_text)
+  local trimmed = statement_text:upper():gsub("^%s+", "")
+  local is_dml = trimmed:match("^INSERT%s") ~= nil or
+                 trimmed:match("^UPDATE%s") ~= nil or
+                 trimmed:match("^DELETE%s") ~= nil
+  local exec_query = is_dml and (statement_text .. "; SELECT changes();") or statement_text
+  return is_dml, exec_query
+end
+
 ---Execute a single SQLite statement and return parsed result
 ---@param connection table SQLite connection
 ---@param statement_text string Single SQL statement
@@ -246,18 +292,7 @@ local function execute_single_sqlite_statement(connection, statement_text)
   -- Expand path
   local db_path = vim.fn.expand(connection.path)
 
-  -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
-  local query_upper = statement_text:upper()
-  local query_trimmed = query_upper:gsub("^%s+", "")
-  local is_dml = query_trimmed:match("^INSERT%s") or
-                 query_trimmed:match("^UPDATE%s") or
-                 query_trimmed:match("^DELETE%s")
-
-  -- For DML statements, append SELECT changes() to get affected row count
-  local exec_query = statement_text
-  if is_dml then
-    exec_query = statement_text .. "; SELECT changes();"
-  end
+  local is_dml, exec_query = prepare_sqlite_query(statement_text)
 
   -- Execute synchronously using vim.fn.system
   local cmd = string.format("sqlite3 %s -column -header %s",
@@ -308,160 +343,131 @@ local function execute_single_sqlite_statement(connection, statement_text)
   return parsed_result, nil, duration, row_count
 end
 
+---Build a statement result object with a consistent structure
+---@param stmt table Statement object with .type and .text fields
+---@param connection table Database connection
+---@param duration number Execution time in milliseconds
+---@param row_count number Rows affected or returned
+---@param parsed_result table|nil Parsed output (non-nil for successful SELECT)
+---@param err string|nil Error message if execution failed
+---@return table Statement result object
+local function make_statement_result(stmt, connection, duration, row_count, parsed_result, err)
+  local result = {
+    type         = stmt.type,
+    query_text   = stmt.text,
+    elapsed      = duration,
+    db_type      = connection.type,
+    db_name      = connection.database or connection.name,
+    executed_on  = os.date("%Y-%m-%d %H:%M:%S"),
+  }
+
+  if err then
+    result.rows         = 0
+    result.result_table = nil
+    result.message      = "ERROR: " .. err
+    result.error        = true
+    return result
+  end
+
+  result.rows = row_count
+
+  if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
+    result.result_table = {
+      headers = parsed_result and parsed_result.headers or {},
+      rows    = parsed_result and parsed_result.rows    or {},
+    }
+    result.message = nil
+  elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
+    result.result_table = nil
+    local statement_matcher = require("enhance.statement_matcher")
+    result.message = statement_matcher._generate_dml_message(stmt.type, row_count)
+  elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
+    result.result_table = nil
+    local statement_matcher = require("enhance.statement_matcher")
+    local query_type = nil
+    local upper = stmt.text:upper()
+    if upper:match("^CREATE%s+TABLE") then
+      query_type = "CREATE_TABLE"
+    elseif upper:match("^DROP%s+TABLE") then
+      query_type = "DROP_TABLE"
+    elseif upper:match("^ALTER%s+TABLE") then
+      query_type = "ALTER_TABLE"
+    end
+    result.message = statement_matcher._generate_ddl_message(query_type)
+  end
+
+  return result
+end
+
+---Execute statements individually (de-batched) using a DB-specific executor
+---Shared implementation for all database types that support debatch mode.
+---@param connection table Database connection
+---@param groups table[] Execution groups from the statement classifier
+---@param query_bufnr number? Optional query buffer number
+---@param execute_single_fn function DB-specific single-statement executor
+---  Signature: fn(connection, stmt_text) -> parsed_result, err, duration, row_count
+local function execute_debatch(connection, groups, query_bufnr, execute_single_fn)
+  local all_statement_results = {}
+  local total_duration = 0
+  local had_error = false
+
+  for _, group in ipairs(groups) do
+    for _, stmt in ipairs(group.statements) do
+      local parsed_result, err, duration, row_count = execute_single_fn(connection, stmt.text)
+      total_duration = total_duration + duration
+
+      local result = make_statement_result(stmt, connection, duration, row_count, parsed_result, err)
+      table.insert(all_statement_results, result)
+
+      if err then
+        had_error = true
+        break
+      end
+    end
+
+    if had_error then break end
+  end
+
+  local formatter = require("enhance.formatter")
+  local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+
+  -- Fallback: if the error result wasn't captured by the formatter, append a notice
+  if had_error then
+    local last = all_statement_results[#all_statement_results]
+    if not (last and last.error) then
+      table.insert(formatted_lines, "")
+      table.insert(formatted_lines, "Query Execution Failed")
+      table.insert(formatted_lines, "(Remaining statements not executed)")
+    end
+  end
+
+  local metadata = {
+    execution_time   = total_duration,
+    row_count        = total_table_rows or 0,
+    db_type          = connection.type,
+    timestamp        = os.date("%Y-%m-%d %H:%M:%S"),
+    connection_name  = connection.name,
+    statement_count  = #all_statement_results,
+    total_table_rows = total_table_rows,
+    is_error         = had_error,
+    statement_results = all_statement_results,
+  }
+
+  require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
+
+  if had_error then
+    vim.notify("Query execution failed with partial results", vim.log.levels.WARN)
+  else
+    vim.notify("Query executed successfully", vim.log.levels.INFO)
+  end
+end
+
 ---Execute SQLite statements individually (de-batched)
 ---@param connection table SQLite connection
 ---@param groups table[] Execution groups from classifier
 ---@param query_bufnr number? Optional query buffer number
 local function execute_debatch_sqlite(connection, groups, query_bufnr)
-  local all_statement_results = {}
-  local total_duration = 0
-  local had_error = false
-  local error_message = nil
-
-  -- Process each group
-  for _, group in ipairs(groups) do
-    if group.type == "individual" then
-      -- Execute each statement individually
-      for _, stmt in ipairs(group.statements) do
-        local parsed_result, err, duration, row_count = execute_single_sqlite_statement(connection, stmt.text)
-        total_duration = total_duration + duration
-
-        if err then
-          -- Create error result
-          local result = {
-            type = stmt.type,
-            query_text = stmt.text,
-            rows = 0,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-            result_table = nil,
-            message = "ERROR: " .. err,
-            error = true,
-          }
-          table.insert(all_statement_results, result)
-          had_error = true
-          error_message = err
-          break -- Stop on first error
-        else
-          -- Create success result
-          local result = {
-            type = stmt.type,
-            query_text = stmt.text,
-            rows = row_count,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-          }
-
-          -- Add result_table for SELECT, message for DML/DDL
-          if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
-            result.result_table = {
-              headers = parsed_result.headers,
-              rows = parsed_result.rows,
-            }
-            result.message = nil
-          elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
-            result.result_table = nil
-            local statement_matcher = require("enhance.statement_matcher")
-            result.message = statement_matcher._generate_dml_message(stmt.type, row_count)
-          elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
-            result.result_table = nil
-            local statement_matcher = require("enhance.statement_matcher")
-            -- Detect query type for DDL
-            local query_type = nil
-            local upper = stmt.text:upper()
-            if upper:match("^CREATE%s+TABLE") then
-              query_type = "CREATE_TABLE"
-            elseif upper:match("^DROP%s+TABLE") then
-              query_type = "DROP_TABLE"
-            elseif upper:match("^ALTER%s+TABLE") then
-              query_type = "ALTER_TABLE"
-            end
-            result.message = statement_matcher._generate_ddl_message(query_type)
-          end
-
-          table.insert(all_statement_results, result)
-        end
-      end
-
-      if had_error then
-        break -- Stop processing groups on error
-      end
-    else
-      -- Batch group within de-batch mode - execute individually with timing
-      -- Note: These are "batch" statements (SELECT, PRAGMA) within a de-batched execution
-      -- They should still show individual elapsed time since we're in de-batch mode
-      for _, stmt in ipairs(group.statements) do
-        local parsed_result, err, duration, row_count = execute_single_sqlite_statement(connection, stmt.text)
-        total_duration = total_duration + duration
-
-        if err then
-          had_error = true
-          error_message = err
-          break
-        end
-
-        -- Create result with individual elapsed time (we're in de-batch mode)
-        local result = {
-          type = stmt.type,
-          query_text = stmt.text,
-          rows = stmt.type == "SELECT" and #parsed_result.rows or row_count,
-          elapsed = duration,  -- Show individual time in de-batch mode
-          db_type = connection.type,
-          db_name = connection.name,
-          executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-        }
-
-        if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
-          result.result_table = {
-            headers = parsed_result.headers,
-            rows = parsed_result.rows,
-          }
-        end
-
-        table.insert(all_statement_results, result)
-      end
-
-      if had_error then
-        break
-      end
-    end
-  end
-
-  -- Format and display results
-  if had_error then
-    local error_display = {
-      "Query Execution Failed",
-      "",
-    }
-    -- Split error message by newlines to avoid nvim_buf_set_lines error
-    local error_text = error_message or "Unknown error"
-    for line in error_text:gmatch("[^\r\n]+") do
-      table.insert(error_display, line)
-    end
-    require("enhance.results").display_message(error_display, connection, query_bufnr)
-    vim.notify("Query execution failed", vim.log.levels.ERROR)
-  else
-    local formatter = require("enhance.formatter")
-    local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
-
-    -- Build metadata
-    local metadata = {
-      execution_time = total_duration,
-      row_count = total_table_rows or 0,
-      db_type = connection.type,
-      timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-      connection_name = connection.name,
-      statement_count = #all_statement_results,
-      total_table_rows = total_table_rows,
-    }
-
-    require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
-    vim.notify("Query executed successfully", vim.log.levels.INFO)
-  end
+  execute_debatch(connection, groups, query_bufnr, execute_single_sqlite_statement)
 end
 
 ---Execute SQLite query using sqlite3 CLI
@@ -501,18 +507,8 @@ function M.execute_sqlite(connection, query, query_bufnr)
 
   -- Continue with existing batch execution for batch mode
 
-  -- Detect if this is a DML statement (INSERT, UPDATE, DELETE)
   local query_upper = query:upper()
-  local query_trimmed = query_upper:gsub("^%s+", "")
-  local is_dml = query_trimmed:match("^INSERT%s") or
-                 query_trimmed:match("^UPDATE%s") or
-                 query_trimmed:match("^DELETE%s")
-
-  -- For DML statements, append SELECT changes() to get affected row count
-  local exec_query = query
-  if is_dml then
-    exec_query = query .. "; SELECT changes();"
-  end
+  local is_dml, exec_query = prepare_sqlite_query(query)
 
   -- Collect errors for display in results window
   local error_lines = {}
@@ -688,47 +684,7 @@ end
 local function execute_single_sqlserver_statement(connection, statement_text)
   local start_time = vim.loop.hrtime()
 
-  -- Build sqlcmd command
-  local cmd = { 'sqlcmd' }
-
-  if connection.server or connection.host then
-    table.insert(cmd, '-S')
-    table.insert(cmd, connection.server or connection.host)
-  end
-
-  if connection.database then
-    table.insert(cmd, '-d')
-    table.insert(cmd, connection.database)
-  end
-
-  if connection.user or connection.username then
-    table.insert(cmd, '-U')
-    table.insert(cmd, connection.user or connection.username)
-  end
-
-  if connection.password then
-    table.insert(cmd, '-P')
-    table.insert(cmd, connection.password)
-  end
-
-  -- Use Windows Authentication if no user/password
-  if not connection.user and not connection.username and not connection.password then
-    table.insert(cmd, '-E')
-  end
-
-  -- Trust server certificate (for self-signed certs)
-  if connection.trust_server_certificate ~= false then
-    table.insert(cmd, '-C')
-  end
-
-  -- Output formatting
-  table.insert(cmd, '-s')
-  table.insert(cmd, '|') -- Column separator
-  table.insert(cmd, '-W') -- Remove trailing spaces
-  table.insert(cmd, '-y')
-  table.insert(cmd, '8000') -- Max variable-type column width
-  table.insert(cmd, '-Q')
-  table.insert(cmd, statement_text)
+  local cmd = build_sqlcmd_cmd(connection, { query = statement_text })
 
   -- Execute synchronously
   local output = vim.fn.system(cmd)
@@ -787,193 +743,92 @@ end
 ---@param groups table[] Execution groups from classifier
 ---@param query_bufnr number? Optional query buffer number
 local function execute_debatch_sqlserver(connection, groups, query_bufnr)
+  execute_debatch(connection, groups, query_bufnr, M._execute_single_sqlserver_statement)
+end
+
+---Parse SQL Server batch output that contains errors and display results
+---Separates any successful result sets that appeared before the error.
+---@param output_lines string[] Raw output lines from sqlcmd
+---@param query string Original SQL query (used for query_text on pure-error results)
+---@param connection table SQL Server connection
+---@param duration number Total execution time in milliseconds
+---@param query_bufnr number? Optional query buffer number
+local function parse_batch_error_output(output_lines, query, connection, duration, query_bufnr)
+  -- Collect the error message block (everything from the first "Msg X, Level Y" onward)
+  local error_lines_text = {}
+  local in_error = false
+  for _, line in ipairs(output_lines) do
+    if line:match("Msg %d+, Level %d+") then in_error = true end
+    if in_error then table.insert(error_lines_text, line) end
+  end
+
+  -- Parse full output — may contain partial result sets before the error
+  local parsed_result = require("enhance.parser").parse(output_lines, connection.type)
+
+  -- Normalise to multiple_results format for consistent processing
+  local has_successful_results = false
+  if parsed_result and parsed_result.multiple_results and #parsed_result.result_sets > 0 then
+    has_successful_results = true
+  elseif parsed_result and parsed_result.headers and #parsed_result.headers > 0
+      and parsed_result.rows and #parsed_result.rows > 0 then
+    has_successful_results = true
+    parsed_result = {
+      multiple_results = true,
+      result_sets = { { headers = parsed_result.headers, rows = parsed_result.rows,
+                         metadata = parsed_result.metadata or {} } },
+      metadata = parsed_result.metadata or { db_type = connection.type },
+    }
+  end
+
   local all_statement_results = {}
-  local total_duration = 0
-  local had_error = false
-  local error_message = nil
 
-  -- Process each group
-  for _, group in ipairs(groups) do
-    if group.type == "individual" then
-      -- Execute each statement individually
-      for _, stmt in ipairs(group.statements) do
-        local parsed_result, err, duration, row_count = M._execute_single_sqlserver_statement(connection, stmt.text)
-        total_duration = total_duration + duration
-
-        if err then
-          -- Create error result
-          local result = {
-            type = stmt.type,
-            query_text = stmt.text,
-            rows = 0,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.database or connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-            result_table = nil,
-            message = "ERROR: " .. err,
-            error = true,
-          }
-          table.insert(all_statement_results, result)
-          had_error = true
-          error_message = err
-          break -- Stop on first error
-        else
-          -- Create success result
-          local result = {
-            type = stmt.type,
-            query_text = stmt.text,
-            rows = row_count,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.database or connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-          }
-
-          -- Add result_table for SELECT, message for DML/DDL
-          if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
-            result.result_table = {
-              headers = parsed_result.headers,
-              rows = parsed_result.rows,
-            }
-            result.message = nil
-          elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
-            result.result_table = nil
-            local statement_matcher = require("enhance.statement_matcher")
-            result.message = statement_matcher._generate_dml_message(stmt.type, row_count)
-          elseif stmt.type == "CREATE" or stmt.type == "DROP" or stmt.type == "ALTER" then
-            result.result_table = nil
-            local statement_matcher = require("enhance.statement_matcher")
-            -- Detect query type for DDL
-            local query_type = nil
-            local upper = stmt.text:upper()
-            if upper:match("^CREATE%s+TABLE") then
-              query_type = "CREATE_TABLE"
-            elseif upper:match("^DROP%s+TABLE") then
-              query_type = "DROP_TABLE"
-            elseif upper:match("^ALTER%s+TABLE") then
-              query_type = "ALTER_TABLE"
-            end
-            result.message = statement_matcher._generate_ddl_message(query_type)
-          end
-
-          table.insert(all_statement_results, result)
-        end
-      end
-
-      if had_error then
-        break -- Stop processing groups on error
-      end
-    else
-      -- Batch group within de-batch mode - execute individually with timing
-      -- Note: These are "batch" statements (SELECT, PRAGMA) within a de-batched execution
-      -- They should still show individual elapsed time since we're in de-batch mode
-      for _, stmt in ipairs(group.statements) do
-        local parsed_result, err, duration, row_count = M._execute_single_sqlserver_statement(connection, stmt.text)
-        total_duration = total_duration + duration
-
-        if err then
-          -- Create error result (same as debatch group error handling)
-          local result = {
-            type = stmt.type,
-            query_text = stmt.text,
-            rows = 0,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.database or connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-            result_table = nil,
-            message = "ERROR: " .. err,
-            error = true,  -- Flag for error highlighting
-          }
-          table.insert(all_statement_results, result)
-          had_error = true
-          error_message = err
-          break
-        end
-
-        -- Create result with individual elapsed time (we're in de-batch mode)
-        local result = {
-          type = stmt.type,
-          query_text = stmt.text,
-          rows = stmt.type == "SELECT" and #parsed_result.rows or row_count,
-          elapsed = duration,  -- Show individual time in de-batch mode
-          db_type = connection.type,
-          db_name = connection.database or connection.name,
-          executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-        }
-
-        if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
-          result.result_table = {
-            headers = parsed_result.headers,
-            rows = parsed_result.rows,
-          }
-        end
-
-        table.insert(all_statement_results, result)
-      end
-
-      if had_error then
-        break
-      end
+  if has_successful_results then
+    -- One synthetic result object per successful result set
+    for _, result_set in ipairs(parsed_result.result_sets) do
+      table.insert(all_statement_results, {
+        type        = "SELECT",
+        query_text  = "",
+        rows        = #result_set.rows,
+        elapsed     = 0,  -- batch mode: no per-statement timing
+        db_type     = connection.type,
+        db_name     = connection.database or connection.name,
+        executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+        result_table = { headers = result_set.headers, rows = result_set.rows },
+      })
     end
   end
 
-  -- Format and display results
+  -- Append the error result
+  table.insert(all_statement_results, {
+    type        = "SELECT",
+    query_text  = has_successful_results and "" or query,
+    rows        = 0,
+    elapsed     = has_successful_results and 0 or duration,
+    db_type     = connection.type,
+    db_name     = connection.database or connection.name,
+    executed_on = os.date("%Y-%m-%d %H:%M:%S"),
+    result_table = nil,
+    message     = "ERROR: " .. table.concat(error_lines_text, "\n"),
+    error       = true,
+  })
+
   local formatter = require("enhance.formatter")
   local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
 
-  -- If there was an error, check if we need to append error message
-  -- (Don't append if formatter already included it in results)
-  if had_error then
-    -- Check if last result is an error result (formatter already included error)
-    local last_result = all_statement_results[#all_statement_results]
-    local error_already_in_results = last_result and last_result.error == true
-
-    if not error_already_in_results then
-      -- Error not in results, append it
-      table.insert(formatted_lines, "")
-      table.insert(formatted_lines, "")
-      table.insert(formatted_lines, "Query Execution Failed")
-      table.insert(formatted_lines, "")
-
-      -- Split error message by newlines - ensure no embedded newlines
-      local error_text = error_message or "Unknown error"
-      local error_lines = vim.split(error_text, "\n", { plain = true, trimempty = false })
-      for _, line in ipairs(error_lines) do
-        table.insert(formatted_lines, line)
-      end
-
-      -- Add note about remaining statements
-      if #all_statement_results > 0 then
-        table.insert(formatted_lines, "")
-        table.insert(formatted_lines, "(Remaining statements not executed)")
-      end
-    end
-  end
-
-  -- Note: Newlines are now handled at the source (formatter splits statement.message by newlines)
-
-  -- Build metadata
   local metadata = {
-    execution_time = total_duration,
-    row_count = total_table_rows or 0,
-    db_type = connection.type,
-    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-    connection_name = connection.name,
-    statement_count = #all_statement_results,
-    total_table_rows = total_table_rows,
-    is_error = had_error,  -- Flag for error highlighting
-    statement_results = all_statement_results,  -- Pass statement results for smart highlighting
+    execution_time    = duration,
+    row_count         = total_table_rows or 0,
+    db_type           = connection.type,
+    timestamp         = os.date("%Y-%m-%d %H:%M:%S"),
+    connection_name   = connection.name,
+    statement_count   = #all_statement_results,
+    total_table_rows  = total_table_rows,
+    is_error          = true,
+    statement_results = all_statement_results,
   }
 
+  vim.notify("Query execution failed", vim.log.levels.ERROR)
   require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
-
-  if had_error then
-    vim.notify("Query execution failed with partial results", vim.log.levels.WARN)
-  else
-    vim.notify("Query executed successfully", vim.log.levels.INFO)
-  end
 end
 
 ---Execute SQL Server query using sqlcmd CLI
@@ -1003,48 +858,7 @@ function M.execute_sqlserver(connection, query, query_bufnr)
   local error_lines = {}
   local start_time = vim.loop.hrtime()
 
-  -- Build connection string
-  local cmd = { 'sqlcmd' }
-
-  if connection.server or connection.host then
-    table.insert(cmd, '-S')
-    table.insert(cmd, connection.server or connection.host)
-  end
-
-  if connection.database then
-    table.insert(cmd, '-d')
-    table.insert(cmd, connection.database)
-  end
-
-  if connection.user or connection.username then
-    table.insert(cmd, '-U')
-    table.insert(cmd, connection.user or connection.username)
-  end
-
-  if connection.password then
-    table.insert(cmd, '-P')
-    table.insert(cmd, connection.password)
-  end
-
-  -- Use Windows Authentication if no user/password
-  if not connection.user and not connection.username and not connection.password then
-    table.insert(cmd, '-E')
-  end
-
-  -- Trust server certificate (for self-signed certs)
-  -- Default to true for compatibility with most dev/test environments
-  if connection.trust_server_certificate ~= false then
-    table.insert(cmd, '-C')
-  end
-
-  -- Output formatting
-  table.insert(cmd, '-s')
-  table.insert(cmd, '|') -- Column separator
-  table.insert(cmd, '-W') -- Remove trailing spaces
-  table.insert(cmd, '-y')
-  table.insert(cmd, '8000') -- Max variable-type column width (for NVARCHAR/VARCHAR)
-  table.insert(cmd, '-Q')
-  table.insert(cmd, query)
+  local cmd = build_sqlcmd_cmd(connection, { query = query })
 
   vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -1081,128 +895,7 @@ function M.execute_sqlserver(connection, query, query_bufnr)
       end
 
       if has_sql_error then
-        -- Parse output to separate successful results from errors
-        -- Use same approach as debatch mode for consistent formatting
-        local statement_detector = require("enhance.statement_detector")
-        local detected_statements = statement_detector.detect_statements(query)
-
-        -- Parse the output (may contain partial results before error)
-        local parser = require("enhance.parser")
-        local parsed_result = parser.parse(output_lines, connection.type)
-
-        -- Build statement results with error detection
-        local all_statement_results = {}
-        local error_found = false
-        local error_lines_text = {}
-
-        -- Collect error message lines
-        local in_error = false
-        for _, line in ipairs(output_lines) do
-          if line:match("Msg %d+, Level %d+") then
-            in_error = true
-          end
-          if in_error then
-            table.insert(error_lines_text, line)
-          end
-        end
-
-        -- Match statements to results (if we have parsed results)
-        local has_successful_results = false
-
-        -- Check for multiple result sets
-        if parsed_result and parsed_result.multiple_results and #parsed_result.result_sets > 0 then
-          has_successful_results = true
-        -- Check for single result set with data
-        elseif parsed_result and parsed_result.headers and #parsed_result.headers > 0 and parsed_result.rows and #parsed_result.rows > 0 then
-          has_successful_results = true
-          -- Convert single result to multiple_results format for consistent processing
-          parsed_result = {
-            multiple_results = true,
-            result_sets = {
-              {
-                headers = parsed_result.headers,
-                rows = parsed_result.rows,
-                metadata = parsed_result.metadata or {}
-              }
-            },
-            metadata = parsed_result.metadata or { db_type = connection.type }
-          }
-        end
-
-        if has_successful_results then
-          -- We have some successful results before the error
-          -- Format successful results directly without statement matching
-          -- (statement matching would create empty results for unmatched statements)
-          local formatter = require("enhance.formatter")
-
-          -- Create statement results from parsed result sets
-          for i, result_set in ipairs(parsed_result.result_sets) do
-            local result = {
-              type = "SELECT",
-              query_text = "",
-              rows = #result_set.rows,
-              elapsed = 0,  -- Batch mode doesn't show individual elapsed times
-              db_type = connection.type,
-              db_name = connection.database or connection.name,
-              executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-              result_table = {
-                headers = result_set.headers,
-                rows = result_set.rows,
-              },
-            }
-            table.insert(all_statement_results, result)
-          end
-
-          -- Add error result for the failed statement (with ERROR: prefix like debatch mode)
-          local error_result = {
-            type = "SELECT",
-            query_text = "",
-            rows = 0,
-            elapsed = 0,
-            db_type = connection.type,
-            db_name = connection.database or connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-            result_table = nil,
-            message = "ERROR: " .. table.concat(error_lines_text, "\n"),
-            error = true,
-          }
-          table.insert(all_statement_results, error_result)
-        else
-          -- No successful results, just error (with ERROR: prefix like debatch mode)
-          local error_result = {
-            type = "SELECT",
-            query_text = query,
-            rows = 0,
-            elapsed = duration,
-            db_type = connection.type,
-            db_name = connection.database or connection.name,
-            executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-            result_table = nil,
-            message = "ERROR: " .. table.concat(error_lines_text, "\n"),
-            error = true,
-          }
-          table.insert(all_statement_results, error_result)
-        end
-
-        -- Format using the same formatter as debatch mode
-        local formatter = require("enhance.formatter")
-        local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
-
-        -- Build metadata with statement_results for data-driven highlighting
-        local metadata = {
-          execution_time = duration,
-          row_count = total_table_rows or 0,
-          db_type = connection.type,
-          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-          connection_name = connection.name,
-          statement_count = #all_statement_results,
-          total_table_rows = total_table_rows,
-          is_error = true,
-          statement_results = all_statement_results,
-        }
-
-        vim.notify("Query execution failed", vim.log.levels.ERROR)
-        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
+        parse_batch_error_output(output_lines, query, connection, duration, query_bufnr)
         return
       end
 
@@ -1558,6 +1251,9 @@ M._execute_single_sqlite_statement = execute_single_sqlite_statement
 M._execute_debatch_sqlite = execute_debatch_sqlite
 M._execute_single_sqlserver_statement = execute_single_sqlserver_statement
 M._execute_debatch_sqlserver = execute_debatch_sqlserver
+M._prepare_sqlite_query = prepare_sqlite_query
+M._build_sqlcmd_cmd = build_sqlcmd_cmd
+M._parse_batch_error_output = parse_batch_error_output
 
 return M
 

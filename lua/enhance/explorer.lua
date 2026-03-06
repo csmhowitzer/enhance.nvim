@@ -30,6 +30,21 @@ local expanded = {}
 ---@type table<string, string[]> Cached table lists per connection
 local table_cache = {}
 
+---@type table<string, string[]> Cached object lists (views/procedures/functions/temp_tables) per connection
+local object_cache = {}
+
+---Database capabilities per normalized db type
+---@type table<string, table>
+local db_capabilities = {
+	sqlite     = { views = true,  procedures = false, functions = false, global_temp_tables = false },
+	sqlserver  = { views = true,  procedures = true,  functions = true,  global_temp_tables = true  },
+	mssql      = { views = true,  procedures = true,  functions = true,  global_temp_tables = true  },
+	mysql      = { views = true,  procedures = true,  functions = true,  global_temp_tables = false },
+	mariadb    = { views = true,  procedures = true,  functions = true,  global_temp_tables = false },
+	postgres   = { views = true,  procedures = true,  functions = true,  global_temp_tables = false },
+	postgresql = { views = true,  procedures = true,  functions = true,  global_temp_tables = false },
+}
+
 ---@type table<string, table[]> Tracked buffers per connection
 -- Format: { ["example.db"] = { {bufnr=5, filepath="/path/to/file.sql"}, ... } }
 local connection_buffers = {}
@@ -514,7 +529,7 @@ local function fetch_tables(connection, force_refresh)
 		if vim.v.shell_error == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
-				if trimmed ~= "" then
+				if trimmed ~= "" and not trimmed:match("^%(") then
 					table.insert(tables, trimmed)
 				end
 			end
@@ -588,6 +603,225 @@ local function fetch_tables(connection, force_refresh)
 	return tables
 end
 
+---Get capability flags for a connection's database type
+---@param connection table Database connection
+---@return table caps Capability flags {views, procedures, functions, global_temp_tables}
+local function get_db_capabilities(connection)
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+	return db_capabilities[db_type]
+		or { views = false, procedures = false, functions = false, global_temp_tables = false }
+end
+
+---Fetch views for a connection (SQL Server only for now)
+---@param connection table Database connection
+---@param force_refresh boolean? Force cache refresh
+---@return string[] views List of view names
+local function fetch_views(connection, force_refresh)
+	local cache_key = "views:" .. connection.name
+	if not force_refresh and object_cache[cache_key] then
+		return object_cache[cache_key]
+	end
+
+	local views = {}
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	if db_type == "sqlserver" or db_type == "mssql" then
+		local cmd = {
+			"sqlcmd",
+			"-S", connection.server or connection.host,
+			"-d", connection.database,
+			"-h", "-1",
+			"-W",
+		}
+		if connection.user or connection.username then
+			table.insert(cmd, "-U")
+			table.insert(cmd, connection.user or connection.username)
+			if connection.password then
+				table.insert(cmd, "-P")
+				table.insert(cmd, connection.password)
+			end
+		else
+			table.insert(cmd, "-E")
+		end
+		if connection.trust_server_certificate ~= false then
+			table.insert(cmd, "-C")
+		end
+		table.insert(cmd, "-Q")
+		table.insert(cmd, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS ORDER BY TABLE_NAME;")
+		local output = vim.fn.system(cmd)
+		if vim.v.shell_error == 0 then
+			for line in output:gmatch("[^\r\n]+") do
+				local trimmed = line:match("^%s*(.-)%s*$")
+				if trimmed ~= "" and not trimmed:match("^%(") then
+					table.insert(views, trimmed)
+				end
+			end
+		end
+	end
+
+	object_cache[cache_key] = views
+	return views
+end
+
+---Fetch stored procedures for a connection (SQL Server only for now)
+---@param connection table Database connection
+---@param force_refresh boolean? Force cache refresh
+---@return string[] procs List of procedure names
+local function fetch_procedures(connection, force_refresh)
+	local cache_key = "procedures:" .. connection.name
+	if not force_refresh and object_cache[cache_key] then
+		return object_cache[cache_key]
+	end
+
+	local procs = {}
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	if db_type == "sqlserver" or db_type == "mssql" then
+		local cmd = {
+			"sqlcmd",
+			"-S", connection.server or connection.host,
+			"-d", connection.database,
+			"-h", "-1",
+			"-W",
+		}
+		if connection.user or connection.username then
+			table.insert(cmd, "-U")
+			table.insert(cmd, connection.user or connection.username)
+			if connection.password then
+				table.insert(cmd, "-P")
+				table.insert(cmd, connection.password)
+			end
+		else
+			table.insert(cmd, "-E")
+		end
+		if connection.trust_server_certificate ~= false then
+			table.insert(cmd, "-C")
+		end
+		table.insert(cmd, "-Q")
+		table.insert(
+			cmd,
+			"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_NAME;"
+		)
+		local output = vim.fn.system(cmd)
+		if vim.v.shell_error == 0 then
+			for line in output:gmatch("[^\r\n]+") do
+				local trimmed = line:match("^%s*(.-)%s*$")
+				if trimmed ~= "" and not trimmed:match("^%(") then
+					table.insert(procs, trimmed)
+				end
+			end
+		end
+	end
+
+	object_cache[cache_key] = procs
+	return procs
+end
+
+---Fetch user-defined functions for a connection (SQL Server only for now)
+---@param connection table Database connection
+---@param force_refresh boolean? Force cache refresh
+---@return string[] funcs List of function names
+local function fetch_functions(connection, force_refresh)
+	local cache_key = "functions:" .. connection.name
+	if not force_refresh and object_cache[cache_key] then
+		return object_cache[cache_key]
+	end
+
+	local funcs = {}
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	if db_type == "sqlserver" or db_type == "mssql" then
+		local cmd = {
+			"sqlcmd",
+			"-S", connection.server or connection.host,
+			"-d", connection.database,
+			"-h", "-1",
+			"-W",
+		}
+		if connection.user or connection.username then
+			table.insert(cmd, "-U")
+			table.insert(cmd, connection.user or connection.username)
+			if connection.password then
+				table.insert(cmd, "-P")
+				table.insert(cmd, connection.password)
+			end
+		else
+			table.insert(cmd, "-E")
+		end
+		if connection.trust_server_certificate ~= false then
+			table.insert(cmd, "-C")
+		end
+		table.insert(cmd, "-Q")
+		table.insert(
+			cmd,
+			"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' ORDER BY ROUTINE_NAME;"
+		)
+		local output = vim.fn.system(cmd)
+		if vim.v.shell_error == 0 then
+			for line in output:gmatch("[^\r\n]+") do
+				local trimmed = line:match("^%s*(.-)%s*$")
+				if trimmed ~= "" and not trimmed:match("^%(") then
+					table.insert(funcs, trimmed)
+				end
+			end
+		end
+	end
+
+	object_cache[cache_key] = funcs
+	return funcs
+end
+
+---Fetch global temp tables (##) for a connection (SQL Server only)
+---@param connection table Database connection
+---@param force_refresh boolean? Force cache refresh
+---@return string[] temp_tables List of global temp table names
+local function fetch_temp_tables(connection, force_refresh)
+	local cache_key = "temp_tables:" .. connection.name
+	if not force_refresh and object_cache[cache_key] then
+		return object_cache[cache_key]
+	end
+
+	local temp_tables = {}
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	if db_type == "sqlserver" or db_type == "mssql" then
+		local cmd = {
+			"sqlcmd",
+			"-S", connection.server or connection.host,
+			"-d", connection.database,
+			"-h", "-1",
+			"-W",
+		}
+		if connection.user or connection.username then
+			table.insert(cmd, "-U")
+			table.insert(cmd, connection.user or connection.username)
+			if connection.password then
+				table.insert(cmd, "-P")
+				table.insert(cmd, connection.password)
+			end
+		else
+			table.insert(cmd, "-E")
+		end
+		if connection.trust_server_certificate ~= false then
+			table.insert(cmd, "-C")
+		end
+		table.insert(cmd, "-Q")
+		table.insert(cmd, "SELECT name FROM tempdb.sys.tables WHERE name LIKE '##%' ORDER BY name;")
+		local output = vim.fn.system(cmd)
+		if vim.v.shell_error == 0 then
+			for line in output:gmatch("[^\r\n]+") do
+				local trimmed = line:match("^%s*(.-)%s*$")
+				if trimmed ~= "" and not trimmed:match("^%(") then
+					table.insert(temp_tables, trimmed)
+				end
+			end
+		end
+	end
+
+	object_cache[cache_key] = temp_tables
+	return temp_tables
+end
+
 ---Get icon for database type
 ---@param db_type string Database type (sqlite, sqlserver, mysql, postgres)
 ---@return string icon Icon character
@@ -631,7 +865,7 @@ local function get_arrow_icon(is_expanded)
 end
 
 ---Get icon for tree node type
----@param node_type string Node type (connection, tables, saved, table, new_query, table_subitem, buffer, saved_query, result)
+---@param node_type string Node type (connection, tables, saved, table, new_query, table_subitem, buffer, saved_query, result, views, view, procedures, procedure, functions, function, temp_tables, temp_table)
 ---@return string icon Icon character
 local function get_node_icon(node_type)
 	if node_type == "tables" then
@@ -652,6 +886,16 @@ local function get_node_icon(node_type)
 		return "" -- vim-dadbod-ui saved query icon
 	elseif node_type == "result" then
 		return "󰙮" -- result/chart icon for query results
+	elseif node_type == "views" or node_type == "view" then
+		return "󰒉" -- nf-md-database_search (view icon)
+	elseif node_type == "procedures" or node_type == "procedure" then
+		return "󰊢" -- nf-md-function (procedure icon)
+	elseif node_type == "functions" or node_type == "function" then
+		return "󰡱" -- nf-md-lambda (function icon)
+	elseif node_type == "temp_tables" then
+		return "󰓱" -- reuse tables folder icon for temp tables subfolder
+	elseif node_type == "temp_table" then
+		return "󰓫" -- reuse table icon for temp table items
 	end
 	return ""
 end
@@ -749,6 +993,7 @@ local function build_explorer_content()
 			end
 
 			-- Tables folder with count
+			local caps = get_db_capabilities(conn)
 			local tables_key = conn_key .. ":tables"
 			local tables_expanded = expanded[tables_key]
 			local tables_arrow = get_arrow_icon(tables_expanded)
@@ -780,6 +1025,124 @@ local function build_explorer_content()
 						table.insert(lines, string.format("          %s  UPDATE Template", subitem_icon))
 						table.insert(lines, string.format("          %s  DROP Table", subitem_icon))
 						table.insert(lines, string.format("          %s  DELETE Records", subitem_icon))
+					end
+				end
+
+				-- Global Temp Tables subfolder (SQL Server only, nested inside Tables)
+				if caps.global_temp_tables then
+					local temp_tables_list = fetch_temp_tables(conn)
+					local temp_key = conn_key .. ":temp_tables"
+					local temp_expanded = expanded[temp_key]
+					local temp_arrow = get_arrow_icon(temp_expanded)
+					local temp_folder_icon = get_node_icon("temp_tables")
+					table.insert(
+						lines,
+						string.format("      %s %s  Temp Tables (%d)", temp_arrow, temp_folder_icon, #temp_tables_list)
+					)
+
+					if temp_expanded then
+						local temp_table_icon = get_node_icon("temp_table")
+						for _, tt_name in ipairs(temp_tables_list) do
+							local tt_key = conn_key .. ":temp_table:" .. tt_name
+							local tt_expanded = expanded[tt_key]
+							local tt_arrow = get_arrow_icon(tt_expanded)
+							table.insert(lines, string.format("        %s %s  %s", tt_arrow, temp_table_icon, tt_name))
+
+							if tt_expanded then
+								local subitem_icon = get_node_icon("table_subitem")
+								table.insert(lines, string.format("              %s  Columns", subitem_icon))
+								table.insert(lines, string.format("              %s  List (200 rows)", subitem_icon))
+								table.insert(lines, string.format("              %s  CREATE Table", subitem_icon))
+								table.insert(lines, string.format("              %s  DROP Table", subitem_icon))
+							end
+						end
+					end
+				end
+			end
+
+			-- Views section (all databases with view support)
+			if caps.views then
+				local views_list = fetch_views(conn)
+				local views_key = conn_key .. ":views"
+				local views_expanded = expanded[views_key]
+				local views_arrow = get_arrow_icon(views_expanded)
+				local views_icon = get_node_icon("views")
+				table.insert(lines, string.format("    %s %s  Views (%d)", views_arrow, views_icon, #views_list))
+
+				if views_expanded then
+					local view_icon = get_node_icon("view")
+					for _, view_name in ipairs(views_list) do
+						local vkey = conn_key .. ":view:" .. view_name
+						local vexpanded = expanded[vkey]
+						local varrow = get_arrow_icon(vexpanded)
+						table.insert(lines, string.format("      %s %s  %s", varrow, view_icon, view_name))
+
+						if vexpanded then
+							local subitem_icon = get_node_icon("table_subitem")
+							table.insert(lines, string.format("          %s  ALTER", subitem_icon))
+							table.insert(lines, string.format("          %s  CREATE", subitem_icon))
+							table.insert(lines, string.format("          %s  DROP View", subitem_icon))
+							table.insert(lines, string.format("          %s  List (200 rows)", subitem_icon))
+						end
+					end
+				end
+			end
+
+			-- Stored Procedures section
+			if caps.procedures then
+				local procs_list = fetch_procedures(conn)
+				local procs_key = conn_key .. ":procedures"
+				local procs_expanded = expanded[procs_key]
+				local procs_arrow = get_arrow_icon(procs_expanded)
+				local procs_icon = get_node_icon("procedures")
+				table.insert(
+					lines,
+					string.format("    %s %s  Stored Procedures (%d)", procs_arrow, procs_icon, #procs_list)
+				)
+
+				if procs_expanded then
+					local proc_icon = get_node_icon("procedure")
+					for _, proc_name in ipairs(procs_list) do
+						local pkey = conn_key .. ":procedure:" .. proc_name
+						local pexpanded = expanded[pkey]
+						local parrow = get_arrow_icon(pexpanded)
+						table.insert(lines, string.format("      %s %s  %s", parrow, proc_icon, proc_name))
+
+						if pexpanded then
+							local subitem_icon = get_node_icon("table_subitem")
+							table.insert(lines, string.format("          %s  Parameters", subitem_icon))
+							table.insert(lines, string.format("          %s  EXECUTE", subitem_icon))
+							table.insert(lines, string.format("          %s  ALTER", subitem_icon))
+							table.insert(lines, string.format("          %s  DROP Procedure", subitem_icon))
+						end
+					end
+				end
+			end
+
+			-- Functions section
+			if caps.functions then
+				local funcs_list = fetch_functions(conn)
+				local funcs_key = conn_key .. ":functions"
+				local funcs_expanded = expanded[funcs_key]
+				local funcs_arrow = get_arrow_icon(funcs_expanded)
+				local funcs_icon = get_node_icon("functions")
+				table.insert(lines, string.format("    %s %s  Functions (%d)", funcs_arrow, funcs_icon, #funcs_list))
+
+				if funcs_expanded then
+					local func_icon = get_node_icon("function")
+					for _, func_name in ipairs(funcs_list) do
+						local fkey = conn_key .. ":function:" .. func_name
+						local fexpanded = expanded[fkey]
+						local farrow = get_arrow_icon(fexpanded)
+						table.insert(lines, string.format("      %s %s  %s", farrow, func_icon, func_name))
+
+						if fexpanded then
+							local subitem_icon = get_node_icon("table_subitem")
+							table.insert(lines, string.format("          %s  Parameters", subitem_icon))
+							table.insert(lines, string.format("          %s  EXECUTE", subitem_icon))
+							table.insert(lines, string.format("          %s  ALTER", subitem_icon))
+							table.insert(lines, string.format("          %s  DROP Function", subitem_icon))
+						end
 					end
 				end
 			end
@@ -931,17 +1294,23 @@ local function apply_status_highlights()
 		-- Individual table icon: 󰓫 (blue for tables, orange for sub-items)
 		icon_start, icon_end = line:find("󰓫")
 		if icon_start then
-			-- Orange for table sub-items
+			-- Orange for table/view/proc/func sub-items
 			if
 				line:match("Columns")
-				or line:match("List")
+				or line:match("[Ll]ist")
 				or line:match("Primary Keys")
 				or line:match("Foreign Keys")
 				or line:match("Indexes")
-				or line:match("CREATE Table")
+				or line:match("CREATE")
 				or line:match("UPDATE Template")
 				or line:match("DROP Table")
+				or line:match("DROP View")
+				or line:match("DROP Procedure")
+				or line:match("DROP Function")
 				or line:match("DELETE Records")
+				or line:match("ALTER")
+				or line:match("EXECUTE")
+				or line:match("Parameters")
 			then
 				vim.api.nvim_buf_add_highlight(
 					explorer_buf,
@@ -1422,9 +1791,8 @@ function parse_line(line, line_num)
 	-- Determine type based on indent level and name
 	if indent_level >= 4 then
 		-- This is a child node - need to find parent
-		-- For now, check the name to determine type
+		-- Check well-known section folder names first (order matters: specific before general)
 		if name:match("New") and name:match("Query") then
-			-- Find parent connection
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "new_query", conn_name = parent_conn }
@@ -1434,10 +1802,31 @@ function parse_line(line, line_num)
 			if parent_conn then
 				return { type = "buffers", conn_name = parent_conn }
 			end
+		elseif name:match("Temp") and name:match("Tables") then
+			-- "Temp Tables" is nested under the Tables section (check before generic "Tables")
+			local parent_info = find_parent_info(line_num)
+			if parent_info and parent_info.type == "tables" then
+				return { type = "temp_tables", conn_name = parent_info.conn_name }
+			end
 		elseif name:match("Tables") then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "tables", conn_name = parent_conn }
+			end
+		elseif name:match("Views") then
+			local parent_conn = find_parent_connection(line_num)
+			if parent_conn then
+				return { type = "views", conn_name = parent_conn }
+			end
+		elseif name:match("Stored") and name:match("Procedures") then
+			local parent_conn = find_parent_connection(line_num)
+			if parent_conn then
+				return { type = "procedures", conn_name = parent_conn }
+			end
+		elseif name:match("Functions") then
+			local parent_conn = find_parent_connection(line_num)
+			if parent_conn then
+				return { type = "functions", conn_name = parent_conn }
 			end
 		elseif name:match("Saved") then
 			local parent_conn = find_parent_connection(line_num)
@@ -1445,84 +1834,95 @@ function parse_line(line, line_num)
 				return { type = "saved", conn_name = parent_conn }
 			end
 		else
-			-- Could be buffer_item, table, saved_query_item, etc.
-			-- Need to check parent type
+			-- Individual items and sub-items — use parent_info to determine type
 			local parent_info = find_parent_info(line_num)
 			if parent_info then
 				if parent_info.type == "buffers" then
-					-- Check if this is a Results item
 					if name:match("Results") and metadata then
 						return { type = "result_item", conn_name = parent_info.conn_name, line_num = line_num }
 					end
-					-- Buffer names are NOT normalized, use as-is
 					return { type = "buffer_item", conn_name = parent_info.conn_name, buffer_name = name }
 				elseif parent_info.type == "buffer_item" then
-					-- This is a child of a buffer (e.g., Results item)
 					if name:match("Results") and metadata then
 						return { type = "result_item", conn_name = parent_info.conn_name, line_num = line_num }
 					end
 				elseif parent_info.type == "tables" then
-					-- Table names are NOT normalized, use as-is
 					return { type = "table", conn_name = parent_info.conn_name, table_name = name }
 				elseif parent_info.type == "saved" then
-					-- Query names are NOT normalized, use as-is
 					return { type = "saved_query_item", conn_name = parent_info.conn_name, query_name = name }
 				elseif parent_info.type == "table" then
-					-- Table sub-items (Columns, List, etc.)
+					-- Table sub-items
 					if name:match("Columns") then
-						return {
-							type = "table_columns",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_columns", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("List") then
-						return {
-							type = "table_list",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_list", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("Primary") then
-						return {
-							type = "table_pks",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_pks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("Foreign") then
-						return {
-							type = "table_fks",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_fks", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("Indexes") then
-						return {
-							type = "table_indexes",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_indexes", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("CREATE") then
-						return {
-							type = "table_create",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_create", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("UPDATE") then
-						return {
-							type = "table_update",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_update", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("DROP") then
-						return {
-							type = "table_drop",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_drop", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("DELETE") then
-						return {
-							type = "table_delete_records",
-							conn_name = parent_info.conn_name,
-							table_name = parent_info.table_name,
-						}
+						return { type = "table_delete_records", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					end
+				-- ─── New object type parents ────────────────────────────────────
+				elseif parent_info.type == "temp_tables" then
+					return { type = "temp_table", conn_name = parent_info.conn_name, table_name = name }
+				elseif parent_info.type == "temp_table" then
+					-- Temp table sub-items
+					if name:match("Columns") then
+						return { type = "temp_columns", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					elseif name:match("List") then
+						return { type = "temp_list", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					elseif name:match("CREATE") then
+						return { type = "temp_create", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					elseif name:match("DROP") then
+						return { type = "temp_drop", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					end
+				elseif parent_info.type == "views" then
+					return { type = "view", conn_name = parent_info.conn_name, view_name = name }
+				elseif parent_info.type == "view" then
+					-- View sub-items
+					if name:match("ALTER") then
+						return { type = "view_alter", conn_name = parent_info.conn_name, view_name = parent_info.view_name }
+					elseif name:match("CREATE") then
+						return { type = "view_create", conn_name = parent_info.conn_name, view_name = parent_info.view_name }
+					elseif name:match("DROP") then
+						return { type = "view_drop", conn_name = parent_info.conn_name, view_name = parent_info.view_name }
+					elseif name:match("[Ll]ist") then
+						return { type = "view_list", conn_name = parent_info.conn_name, view_name = parent_info.view_name }
+					end
+				elseif parent_info.type == "procedures" then
+					return { type = "procedure", conn_name = parent_info.conn_name, proc_name = name }
+				elseif parent_info.type == "procedure" then
+					-- Procedure sub-items
+					if name:match("Parameters") then
+						return { type = "proc_params", conn_name = parent_info.conn_name, proc_name = parent_info.proc_name }
+					elseif name:match("EXECUTE") then
+						return { type = "proc_execute", conn_name = parent_info.conn_name, proc_name = parent_info.proc_name }
+					elseif name:match("ALTER") then
+						return { type = "proc_alter", conn_name = parent_info.conn_name, proc_name = parent_info.proc_name }
+					elseif name:match("DROP") then
+						return { type = "proc_drop", conn_name = parent_info.conn_name, proc_name = parent_info.proc_name }
+					end
+				elseif parent_info.type == "functions" then
+					return { type = "function", conn_name = parent_info.conn_name, func_name = name }
+				elseif parent_info.type == "function" then
+					-- Function sub-items
+					if name:match("Parameters") then
+						return { type = "func_params", conn_name = parent_info.conn_name, func_name = parent_info.func_name }
+					elseif name:match("EXECUTE") then
+						return { type = "func_execute", conn_name = parent_info.conn_name, func_name = parent_info.func_name }
+					elseif name:match("ALTER") then
+						return { type = "func_alter", conn_name = parent_info.conn_name, func_name = parent_info.func_name }
+					elseif name:match("DROP") then
+						return { type = "func_drop", conn_name = parent_info.conn_name, func_name = parent_info.func_name }
 					end
 				end
 			end
@@ -1921,6 +2321,290 @@ WHERE /* Add your condition here, e.g., id = 1 */;
 	return nil
 end
 
+---Generate SQL script for views, stored procedures, functions, and global temp tables
+---@param connection table Database connection
+---@param object_name string Object name (view/proc/function/temp table name)
+---@param query_type string Type of script to generate
+---@return string? script Generated SQL or nil
+local function generate_object_script(connection, object_name, query_type)
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	-- ── Views ─────────────────────────────────────────────────────────────────
+	if query_type == "view_alter" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- ALTER VIEW script for [%s]
+-- The current definition is shown by sp_helptext below.
+-- Copy the CREATE VIEW ... AS ... block, change CREATE to ALTER, and run it.
+EXEC sp_helptext '[%s]';
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "view_create" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- CREATE VIEW script for [%s]
+SELECT definition AS CreateScript
+FROM sys.sql_modules
+WHERE object_id = OBJECT_ID('[%s]');
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "view_drop" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- DROP VIEW script for [%s]
+-- WARNING: This will permanently remove the view.
+DROP VIEW [dbo].[%s];
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "view_list" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format("SELECT TOP 200 * FROM [dbo].[%s];", object_name)
+		end
+
+	-- ── Stored Procedures ─────────────────────────────────────────────────────
+	elseif query_type == "proc_params" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- Parameters for stored procedure [%s]
+SELECT
+    PARAMETER_NAME,
+    DATA_TYPE,
+    PARAMETER_MODE,
+    CHARACTER_MAXIMUM_LENGTH,
+    NUMERIC_PRECISION,
+    NUMERIC_SCALE
+FROM INFORMATION_SCHEMA.PARAMETERS
+WHERE SPECIFIC_NAME = '%s'
+  AND PARAMETER_NAME != ''
+ORDER BY ORDINAL_POSITION;
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "proc_execute" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- EXECUTE template for [%s]
+-- Step 1: Run the query below to see parameter names and types
+SELECT PARAMETER_NAME, DATA_TYPE, PARAMETER_MODE
+FROM INFORMATION_SCHEMA.PARAMETERS
+WHERE SPECIFIC_NAME = '%s'
+  AND PARAMETER_NAME != ''
+ORDER BY ORDINAL_POSITION;
+
+-- Step 2: Fill in values and run the EXEC statement
+EXEC [dbo].[%s]
+    -- @ParamName = <value>
+;
+]],
+				object_name,
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "proc_alter" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- ALTER PROCEDURE script for [%s]
+-- The current definition is shown by sp_helptext below.
+-- Copy the CREATE PROCEDURE ... block, change CREATE to ALTER, and run it.
+EXEC sp_helptext '[dbo].[%s]';
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "proc_drop" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- DROP PROCEDURE script for [%s]
+-- WARNING: This will permanently remove the stored procedure.
+DROP PROCEDURE [dbo].[%s];
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	-- ── Functions ─────────────────────────────────────────────────────────────
+	elseif query_type == "func_params" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- Parameters for function [%s]
+SELECT
+    PARAMETER_NAME,
+    DATA_TYPE,
+    PARAMETER_MODE,
+    CHARACTER_MAXIMUM_LENGTH,
+    NUMERIC_PRECISION,
+    NUMERIC_SCALE
+FROM INFORMATION_SCHEMA.PARAMETERS
+WHERE SPECIFIC_NAME = '%s'
+  AND PARAMETER_NAME != ''
+ORDER BY ORDINAL_POSITION;
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "func_execute" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- EXECUTE template for function [%s]
+-- Step 1: Run the query below to see parameter names and types
+SELECT PARAMETER_NAME, DATA_TYPE, DATA_TYPE AS ReturnType
+FROM INFORMATION_SCHEMA.PARAMETERS
+WHERE SPECIFIC_NAME = '%s'
+ORDER BY ORDINAL_POSITION;
+
+-- Step 2: Call the function (scalar or table-valued):
+-- Scalar:       SELECT [dbo].[%s](<param1>, <param2>);
+-- Table-valued: SELECT * FROM [dbo].[%s](<param1>, <param2>);
+]],
+				object_name,
+				object_name,
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "func_alter" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- ALTER FUNCTION script for [%s]
+-- The current definition is shown by sp_helptext below.
+-- Copy the CREATE FUNCTION ... block, change CREATE to ALTER, and run it.
+EXEC sp_helptext '[dbo].[%s]';
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "func_drop" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- DROP FUNCTION script for [%s]
+-- WARNING: This will permanently remove the function.
+DROP FUNCTION [dbo].[%s];
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	-- ── Global Temp Tables ────────────────────────────────────────────────────
+	elseif query_type == "temp_columns" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- Columns of global temp table [%s]
+SELECT
+    c.name          AS ColumnName,
+    t.name          AS DataType,
+    CASE
+        WHEN c.max_length = -1 THEN 'MAX'
+        WHEN t.name IN ('nvarchar','nchar','ntext') THEN CAST(c.max_length / 2 AS VARCHAR)
+        ELSE CAST(c.max_length AS VARCHAR)
+    END             AS MaxLength,
+    c.is_nullable   AS IsNullable
+FROM tempdb.sys.columns c
+JOIN tempdb.sys.types t ON c.user_type_id = t.user_type_id
+WHERE c.object_id = OBJECT_ID('tempdb..[%s]')
+ORDER BY c.column_id;
+]],
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "temp_list" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format("SELECT TOP 200 * FROM [%s];", object_name)
+		end
+
+	elseif query_type == "temp_create" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- CREATE TABLE script for global temp table [%s]
+SELECT
+    'CREATE TABLE ' + '%s' + ' (' + CHAR(13) + CHAR(10) +
+    STUFF((
+        SELECT ',' + CHAR(13) + CHAR(10) + '    [' + c.name + '] ' +
+               t.name +
+               CASE
+                   WHEN t.name IN ('nvarchar','nchar','ntext') AND c.max_length > 0
+                   THEN '(' + CAST(c.max_length / 2 AS VARCHAR) + ')'
+                   WHEN t.name IN ('varchar','char','binary','varbinary') AND c.max_length > 0
+                   THEN '(' + CAST(c.max_length AS VARCHAR) + ')'
+                   WHEN c.max_length = -1 THEN '(MAX)'
+                   ELSE ''
+               END +
+               CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE '' END
+        FROM tempdb.sys.columns c2
+        JOIN tempdb.sys.types t ON c2.user_type_id = t.user_type_id
+        WHERE c2.object_id = OBJECT_ID('tempdb..[%s]')
+        ORDER BY c2.column_id
+        FOR XML PATH(''), TYPE
+    ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') +
+    CHAR(13) + CHAR(10) + ');' AS CreateScript
+FROM tempdb.sys.columns c
+WHERE c.object_id = OBJECT_ID('tempdb..[%s]')
+GROUP BY c.object_id;
+]],
+				object_name,
+				object_name,
+				object_name,
+				object_name
+			)
+		end
+
+	elseif query_type == "temp_drop" then
+		if db_type == "sqlserver" or db_type == "mssql" then
+			return string.format(
+				[[
+-- DROP global temp table [%s]
+-- WARNING: This will permanently remove the temp table for all sessions.
+DROP TABLE [%s];
+]],
+				object_name,
+				object_name
+			)
+		end
+	end
+
+	return nil
+end
+
 ---Execute a query and return raw output (for script generation)
 ---@param connection table Database connection
 ---@param query string SQL query
@@ -1968,6 +2652,9 @@ local function execute_query_for_script(connection, query)
 			table.insert(cmd, "-C")
 		end
 
+		-- -y 0: remove column width limit for varchar/nvarchar(max) (prevents truncation of object definitions)
+		table.insert(cmd, "-y")
+		table.insert(cmd, "0")
 		table.insert(cmd, "-Q")
 		table.insert(cmd, query)
 		table.insert(cmd, "-h")
@@ -2033,6 +2720,53 @@ local function execute_query_for_script(connection, query)
 	end
 
 	return nil
+end
+
+---Fetch object definition from sys.sql_modules and build a ready-to-run ALTER or CREATE script
+---Calls execute_query_for_script internally, so must be defined after it.
+---@param connection table Database connection
+---@param object_name string View/proc/function name (without schema)
+---@param query_type string "view_alter"|"view_create"|"proc_alter"|"func_alter"
+---@return string script Ready-to-edit SQL script
+local function fetch_definition_script(connection, object_name, query_type)
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+
+	if db_type ~= "sqlserver" and db_type ~= "mssql" then
+		return string.format("-- fetch_definition_script: not supported for %s", db_type)
+	end
+
+	local query = string.format(
+		"SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(N'[dbo].[%s]')",
+		object_name
+	)
+
+	local raw = execute_query_for_script(connection, query)
+	if not raw then
+		return string.format("-- Failed to fetch definition for [dbo].[%s]", object_name)
+	end
+
+	-- Strip sqlcmd noise: "(N rows affected)" lines and surrounding blank lines
+	local definition = raw:gsub("%(%d+ rows? affected%)\r?\n?", "")
+	definition = vim.trim(definition)
+
+	if definition == "" then
+		return string.format("-- No definition found for [dbo].[%s]", object_name)
+	end
+
+	-- For ALTER queries, replace the leading CREATE keyword
+	if query_type == "view_alter" then
+		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+VIEW%s", "ALTER VIEW ", 1)
+		definition = definition:gsub("^%s*CREATE%s+VIEW%s", "ALTER VIEW ", 1)
+	elseif query_type == "proc_alter" then
+		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
+		definition = definition:gsub("^%s*CREATE%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
+	elseif query_type == "func_alter" then
+		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+FUNCTION%s", "ALTER FUNCTION ", 1)
+		definition = definition:gsub("^%s*CREATE%s+FUNCTION%s", "ALTER FUNCTION ", 1)
+	end
+	-- For view_create, return definition as-is (it's already the CREATE script)
+
+	return definition
 end
 
 ---Parse script from query output
@@ -2355,6 +3089,80 @@ local function handle_open(line_num)
 				create_script_buffer(conn, script, context)
 			end
 		end
+	elseif
+		info.type == "view_alter"
+		or info.type == "view_create"
+		or info.type == "view_drop"
+		or info.type == "view_list"
+	then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local script
+			-- Pre-fetch definition for ALTER and CREATE (opens ready-to-run script)
+			if info.type == "view_alter" or info.type == "view_create" then
+				script = fetch_definition_script(conn, info.view_name, info.type)
+			else
+				script = generate_object_script(conn, info.view_name, info.type)
+			end
+			if script then
+				local context = string.format("%s-%s", info.view_name, info.type:lower())
+				create_script_buffer(conn, script, context)
+			end
+		end
+	elseif
+		info.type == "proc_params"
+		or info.type == "proc_execute"
+		or info.type == "proc_alter"
+		or info.type == "proc_drop"
+	then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local script
+			-- Pre-fetch definition for ALTER (opens ready-to-run script)
+			if info.type == "proc_alter" then
+				script = fetch_definition_script(conn, info.proc_name, info.type)
+			else
+				script = generate_object_script(conn, info.proc_name, info.type)
+			end
+			if script then
+				local context = string.format("%s-%s", info.proc_name, info.type:lower())
+				create_script_buffer(conn, script, context)
+			end
+		end
+	elseif
+		info.type == "func_params"
+		or info.type == "func_execute"
+		or info.type == "func_alter"
+		or info.type == "func_drop"
+	then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local script
+			-- Pre-fetch definition for ALTER (opens ready-to-run script)
+			if info.type == "func_alter" then
+				script = fetch_definition_script(conn, info.func_name, info.type)
+			else
+				script = generate_object_script(conn, info.func_name, info.type)
+			end
+			if script then
+				local context = string.format("%s-%s", info.func_name, info.type:lower())
+				create_script_buffer(conn, script, context)
+			end
+		end
+	elseif
+		info.type == "temp_columns"
+		or info.type == "temp_list"
+		or info.type == "temp_create"
+		or info.type == "temp_drop"
+	then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local script = generate_object_script(conn, info.table_name, info.type)
+			if script then
+				local context = string.format("%s-%s", info.table_name, info.type:lower())
+				create_script_buffer(conn, script, context)
+			end
+		end
 	end
 end
 
@@ -2483,8 +3291,15 @@ local function handle_enter(line_num)
 				end
 			end
 		end
-	elseif info.type == "tables" or info.type == "saved" then
-		-- Toggle folder expansion
+	elseif
+		info.type == "tables"
+		or info.type == "saved"
+		or info.type == "views"
+		or info.type == "procedures"
+		or info.type == "functions"
+		or info.type == "temp_tables"
+	then
+		-- Toggle folder expansion (all top-level and nested folders)
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
 			local key = "conn:" .. conn.name .. ":" .. info.type
@@ -2496,6 +3311,38 @@ local function handle_enter(line_num)
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
 			local key = "conn:" .. conn.name .. ":table:" .. info.table_name
+			expanded[key] = not expanded[key]
+			refresh_explorer()
+		end
+	elseif info.type == "temp_table" then
+		-- Toggle global temp table expansion
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local key = "conn:" .. conn.name .. ":temp_table:" .. info.table_name
+			expanded[key] = not expanded[key]
+			refresh_explorer()
+		end
+	elseif info.type == "view" then
+		-- Toggle view expansion
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local key = "conn:" .. conn.name .. ":view:" .. info.view_name
+			expanded[key] = not expanded[key]
+			refresh_explorer()
+		end
+	elseif info.type == "procedure" then
+		-- Toggle procedure expansion
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local key = "conn:" .. conn.name .. ":procedure:" .. info.proc_name
+			expanded[key] = not expanded[key]
+			refresh_explorer()
+		end
+	elseif info.type == "function" then
+		-- Toggle function expansion
+		local conn = connections.get_connection(info.conn_name)
+		if conn then
+			local key = "conn:" .. conn.name .. ":function:" .. info.func_name
 			expanded[key] = not expanded[key]
 			refresh_explorer()
 		end

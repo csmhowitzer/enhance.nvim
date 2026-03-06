@@ -89,18 +89,57 @@ local function is_inside_comment(text, pos)
   return false
 end
 
----Split query by semicolons (respecting strings and comments)
+---Get the SQL keyword starting at position i (uppercase), or nil if not a word start
+---@param text string Full query text
+---@param i number Position to check
+---@return string? word Uppercase keyword or nil
+local function get_word_at(text, i)
+  local word = text:sub(i):match("^([%a_][%a_%d]*)")
+  return word and word:upper() or nil
+end
+
+---Check if position i is at a word boundary (preceded by non-identifier character)
+---@param text string Full query text
+---@param i number Position to check
+---@return boolean True if at word boundary
+local function at_word_boundary(text, i)
+  if i == 1 then return true end
+  local prev = text:sub(i - 1, i - 1)
+  return prev:match("[^%a_%d]") ~= nil
+end
+
+---Split query by semicolons (respecting strings, comments, and BEGIN/END blocks)
+---Semicolons inside T-SQL BEGIN...END blocks are NOT treated as statement boundaries.
 ---@param query string SQL query
 ---@return string[] Statement texts
 local function split_by_semicolon(query)
   local statements = {}
   local current = ""
-  
-  for i = 1, #query do
+  local begin_depth = 0
+
+  local i = 1
+  while i <= #query do
     local char = query:sub(i, i)
-    
-    if char == ";" and not is_inside_string(query, i) and not is_inside_comment(query, i) then
-      -- Found a statement boundary
+    local in_str = is_inside_string(query, i)
+    local in_cmt = is_inside_comment(query, i)
+
+    -- Track BEGIN/END depth for compound T-SQL blocks
+    if not in_str and not in_cmt and at_word_boundary(query, i) then
+      local word = get_word_at(query, i)
+      if word == "BEGIN" then
+        -- Skip BEGIN TRANSACTION / BEGIN TRY / BEGIN CATCH (no matching END pair)
+        local after_begin = query:sub(i + 5):match("^%s*(%a+)")
+        local next_word = after_begin and after_begin:upper() or ""
+        if next_word ~= "TRANSACTION" and next_word ~= "TRY" and next_word ~= "CATCH" then
+          begin_depth = begin_depth + 1
+        end
+      elseif word == "END" and begin_depth > 0 then
+        begin_depth = begin_depth - 1
+      end
+    end
+
+    if char == ";" and not in_str and not in_cmt and begin_depth == 0 then
+      -- Found a statement boundary outside any BEGIN/END block
       local trimmed = vim.trim(current)
       if trimmed ~= "" then
         table.insert(statements, trimmed)
@@ -109,14 +148,16 @@ local function split_by_semicolon(query)
     else
       current = current .. char
     end
+
+    i = i + 1
   end
-  
+
   -- Add remaining statement
   local trimmed = vim.trim(current)
   if trimmed ~= "" then
     table.insert(statements, trimmed)
   end
-  
+
   return statements
 end
 
@@ -152,6 +193,7 @@ local function remove_comments(query)
 end
 
 ---Split query by keywords (for SQL Server style without semicolons)
+---Statement keywords inside BEGIN...END blocks are NOT treated as boundaries.
 ---@param query string SQL query
 ---@return string[] Statement texts
 local function split_by_keywords(query)
@@ -161,20 +203,36 @@ local function split_by_keywords(query)
   local statements = {}
   local current = ""
   local paren_depth = 0
+  local begin_depth = 0
 
   local i = 1
   while i <= #cleaned_query do
     local char = cleaned_query:sub(i, i)
+    local in_str = is_inside_string(cleaned_query, i)
 
     -- Track parentheses depth
-    if char == "(" and not is_inside_string(cleaned_query, i) then
+    if char == "(" and not in_str then
       paren_depth = paren_depth + 1
-    elseif char == ")" and not is_inside_string(cleaned_query, i) then
+    elseif char == ")" and not in_str then
       paren_depth = paren_depth - 1
     end
 
-    -- Check for statement keywords at depth 0
-    if paren_depth == 0 and not is_inside_string(cleaned_query, i) then
+    -- Track BEGIN/END depth for compound T-SQL blocks
+    if not in_str and at_word_boundary(cleaned_query, i) then
+      local word = get_word_at(cleaned_query, i)
+      if word == "BEGIN" then
+        local after_begin = cleaned_query:sub(i + 5):match("^%s*(%a+)")
+        local next_word = after_begin and after_begin:upper() or ""
+        if next_word ~= "TRANSACTION" and next_word ~= "TRY" and next_word ~= "CATCH" then
+          begin_depth = begin_depth + 1
+        end
+      elseif word == "END" and begin_depth > 0 then
+        begin_depth = begin_depth - 1
+      end
+    end
+
+    -- Check for statement keywords only at paren depth 0 AND begin depth 0
+    if paren_depth == 0 and begin_depth == 0 and not in_str then
       for keyword, _ in pairs(STATEMENT_KEYWORDS) do
         local keyword_len = #keyword
         local potential_keyword = cleaned_query:sub(i, i + keyword_len - 1):upper()
@@ -283,6 +341,8 @@ M._remove_comments = remove_comments
 M._split_by_semicolon = split_by_semicolon
 M._split_by_keywords = split_by_keywords
 M._contains_transaction_block = M.contains_transaction_block
+M._get_word_at = get_word_at
+M._at_word_boundary = at_word_boundary
 
 return M
 

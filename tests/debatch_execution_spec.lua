@@ -98,19 +98,17 @@ describe("enhance.executor de-batch execution", function()
         type = "sqlite",
         path = test_db_path,
       }
-      
+
       local query = "UPDATE users SET status='active' WHERE id=2"
-      
-      -- Execute using the internal function
+
       local execute_single = executor._execute_single_sqlite_statement
-      if execute_single then
-        local parsed, err, duration, row_count = execute_single(connection, query)
-        
-        assert.is_nil(err)
-        assert.is_not_nil(parsed)
-        assert.equals(1, row_count)
-        assert.is_true(duration > 0)
-      end
+      assert.is_not_nil(execute_single, "executor._execute_single_sqlite_statement must be exposed for testing")
+      local parsed, err, duration, row_count = execute_single(connection, query)
+
+      assert.is_nil(err)
+      assert.is_not_nil(parsed)
+      assert.equals(1, row_count)
+      assert.is_true(duration > 0)
     end)
     
     it("should execute single SELECT statement", function()
@@ -119,19 +117,18 @@ describe("enhance.executor de-batch execution", function()
         type = "sqlite",
         path = test_db_path,
       }
-      
+
       local query = "SELECT * FROM users WHERE status='active'"
-      
+
       local execute_single = executor._execute_single_sqlite_statement
-      if execute_single then
-        local parsed, err, duration, row_count = execute_single(connection, query)
-        
-        assert.is_nil(err)
-        assert.is_not_nil(parsed)
-        assert.is_true(row_count >= 2) -- Alice and Charlie
-        assert.is_not_nil(parsed.headers)
-        assert.is_not_nil(parsed.rows)
-      end
+      assert.is_not_nil(execute_single, "executor._execute_single_sqlite_statement must be exposed for testing")
+      local parsed, err, duration, row_count = execute_single(connection, query)
+
+      assert.is_nil(err)
+      assert.is_not_nil(parsed)
+      assert.is_true(row_count >= 2) -- Alice and Charlie
+      assert.is_not_nil(parsed.headers)
+      assert.is_not_nil(parsed.rows)
     end)
     
     it("should handle SQL errors gracefully", function()
@@ -140,17 +137,16 @@ describe("enhance.executor de-batch execution", function()
         type = "sqlite",
         path = test_db_path,
       }
-      
+
       local query = "UPDATE nonexistent_table SET col='value'"
-      
+
       local execute_single = executor._execute_single_sqlite_statement
-      if execute_single then
-        local parsed, err, duration, row_count = execute_single(connection, query)
-        
-        assert.is_nil(parsed)
-        assert.is_not_nil(err)
-        assert.is_true(err:match("no such table") ~= nil)
-      end
+      assert.is_not_nil(execute_single, "executor._execute_single_sqlite_statement must be exposed for testing")
+      local parsed, err, duration, row_count = execute_single(connection, query)
+
+      assert.is_nil(parsed)
+      assert.is_not_nil(err)
+      assert.is_true(err:match("no such table") ~= nil)
     end)
   end)
 end)

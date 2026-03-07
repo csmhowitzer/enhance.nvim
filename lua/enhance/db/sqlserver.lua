@@ -102,6 +102,81 @@ function M.test_connection(connection)
   return true, nil
 end
 
+---Private: normalize blank/empty column headers with positional fallbacks
+local function normalize_headers(headers)
+  local out = {}
+  for i, h in ipairs(headers) do
+    out[i] = (h == "" or h:match("^%s*$")) and string.format("(column-%d)", i) or h
+  end
+  return out
+end
+
+---Private: parse a single SQL Server result set chunk.
+---Auto-detects pipe-separated (ID|Name) or space-separated fixed-width format.
+---@param chunk string[] Lines from start of result set up to (not including) the boundary line
+---@return table {headers: string[], rows: string[][]}
+local function parse_chunk(chunk)
+  if not chunk or #chunk == 0 then return { headers = {}, rows = {} } end
+  local headers, rows, sep_idx = {}, {}, nil
+  for i, line in ipairs(chunk) do
+    if line:match("^%-+") and line:match("^[%-%s|]+$") then sep_idx = i; break end
+  end
+  if not sep_idx or sep_idx <= 1 then return { headers = headers, rows = rows } end
+  local header_line    = chunk[sep_idx - 1]
+  local separator_line = chunk[sep_idx]
+  if header_line:match("|") then
+    -- Pipe-separated format
+    for h in header_line:gmatch("[^|]+") do table.insert(headers, vim.trim(h)) end
+    headers = normalize_headers(headers)
+    for i = sep_idx + 1, #chunk do
+      local line = chunk[i]
+      if line:match("^%(%d+ rows? affected%)") or line == "" then break end
+      local row = {}
+      for cell in line:gmatch("[^|]+") do table.insert(row, vim.trim(cell)) end
+      if #row > 0 then table.insert(rows, row) end
+    end
+  else
+    -- Fixed-width space-separated format
+    local col_pos, sp = {}, 1
+    for dg in separator_line:gmatch("%-+") do
+      local pos = separator_line:find(dg, sp, true)
+      table.insert(col_pos, { start = pos, length = #dg })
+      sp = pos + #dg + 1
+    end
+    for _, col in ipairs(col_pos) do
+      table.insert(headers, vim.trim(header_line:sub(col.start, col.start + col.length - 1)))
+    end
+    headers = normalize_headers(headers)
+    for i = sep_idx + 1, #chunk do
+      local line = chunk[i]
+      if line:match("^%(%d+ rows? affected%)") or line == "" then break end
+      local row = {}
+      if #col_pos == 1 then
+        table.insert(row, vim.trim(line))
+      else
+        for _, col in ipairs(col_pos) do
+          table.insert(row, vim.trim(line:sub(col.start, col.start + col.length - 1)))
+        end
+      end
+      if #row > 0 then table.insert(rows, row) end
+    end
+  end
+  return { headers = headers, rows = rows }
+end
+
+---Grammar descriptor for the normalized parser pipeline.
+---SQL Server uses footer mode: "(X rows affected)" marks the end of each result set.
+---DML-only result sets (no headers/rows, only a row count) are included.
+---@class DbGrammar
+M.grammar = {
+  db_type          = "sqlserver",
+  boundary_mode    = "footer",
+  boundary_match   = function(line) return line:match("^%(%d+ rows? affected%)") ~= nil end,
+  row_count_pattern = "%((%d+) rows? affected%)",
+  include_dml_only = true,
+  parse_chunk      = parse_chunk,
+}
+
 ---Execute a single SQL Server statement synchronously and return a parsed result.
 ---@param connection table SQL Server connection
 ---@param statement_text string Single SQL statement
@@ -142,7 +217,7 @@ function M.execute_single(connection, statement_text)
   end
 
   local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, "sqlserver")
+  local parsed_result = parser.parse(output_lines, M.grammar)
 
   return parsed_result, nil, duration, row_count
 end

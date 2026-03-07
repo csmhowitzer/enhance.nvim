@@ -85,6 +85,66 @@ function M.test_connection(connection)
   return true, nil
 end
 
+---Private: normalize blank/empty column headers with positional fallbacks
+local function normalize_headers(headers)
+  local out = {}
+  for i, h in ipairs(headers) do
+    out[i] = (h == "" or h:match("^%s*$")) and string.format("(column-%d)", i) or h
+  end
+  return out
+end
+
+---Private: parse a single PostgreSQL result set chunk.
+---Chunk layout: lines from the header line through (not including) the footer line.
+---The separator line is detected within the chunk by the grammar boundary_match.
+---@param chunk string[] Lines starting at the header row for this result set
+---@return table {headers: string[], rows: string[][]}
+local function parse_chunk(chunk)
+  if not chunk or #chunk == 0 then return { headers = {}, rows = {} } end
+  local headers, rows, sep_idx = {}, {}, nil
+  for i, line in ipairs(chunk) do
+    if line:match("^%-+%+") or line:match("^%s*%-+%+") or line:match("^%s*%-+%s*$") then
+      sep_idx = i; break
+    end
+  end
+  if not sep_idx or sep_idx <= 1 then return { headers = headers, rows = rows } end
+  local header_line = chunk[sep_idx - 1]
+  if header_line:match("|") then
+    for h in header_line:gmatch("[^|]+") do table.insert(headers, vim.trim(h)) end
+  else
+    table.insert(headers, vim.trim(header_line))
+  end
+  headers = normalize_headers(headers)
+  for i = sep_idx + 1, #chunk do
+    local line = chunk[i]
+    if line:match("^%(.*rows?%)") or line:match("^[A-Z]+%s+%d+%s+%d+") then break end
+    if line:match("|") then
+      local row = {}
+      for cell in line:gmatch("[^|]+") do
+        local t = vim.trim(cell)
+        if t ~= "" then table.insert(row, t) end
+      end
+      if #row > 0 then table.insert(rows, row) end
+    else
+      local t = vim.trim(line)
+      if t ~= "" then table.insert(rows, { t }) end
+    end
+  end
+  return { headers = headers, rows = rows }
+end
+
+---Grammar descriptor for the normalized parser pipeline.
+---PostgreSQL uses separator mode: dash lines mark the START of each result set.
+---@type DbGrammar
+M.grammar = {
+  db_type        = "postgresql",
+  boundary_mode  = "separator",
+  boundary_match = function(line)
+    return (line:match("^%-+%+") or line:match("^%s*%-+%+") or line:match("^%s*%-+%s*$")) and true or false
+  end,
+  parse_chunk    = parse_chunk,
+}
+
 ---Execute a single PostgreSQL statement synchronously.
 ---PostgreSQL does not currently support debatch mode; this is a contract stub.
 ---Manages PGPASSWORD env var for the duration of the call.
@@ -122,7 +182,7 @@ function M.execute_single(connection, statement_text)
   end
 
   local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, "postgres")
+  local parsed_result = parser.parse(output_lines, M.grammar)
 
   return parsed_result, nil, duration, #(parsed_result and parsed_result.rows or {})
 end

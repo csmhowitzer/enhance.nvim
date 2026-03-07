@@ -2,6 +2,7 @@
 -- Contract + behavioral tests for the SQL Server database module
 
 local adapter = require("enhance.db.sqlserver")
+local parser  = require("enhance.parser")
 
 -- ---------------------------------------------------------------------------
 -- Contract tests — every adapter must satisfy these
@@ -180,6 +181,55 @@ end)
 -- ---------------------------------------------------------------------------
 -- test_connection — live SQL Server (skipped when sqlcmd unavailable)
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- grammar descriptor — pipeline contract
+-- ---------------------------------------------------------------------------
+describe("enhance.db.sqlserver grammar", function()
+  it("exposes M.grammar as a table", function()
+    assert.is_table(adapter.grammar)
+  end)
+
+  it("grammar.db_type is 'sqlserver'", function()
+    assert.equals("sqlserver", adapter.grammar.db_type)
+  end)
+
+  it("grammar.boundary_mode is 'footer'", function()
+    assert.equals("footer", adapter.grammar.boundary_mode)
+  end)
+
+  it("grammar.boundary_match is a function", function()
+    assert.is_function(adapter.grammar.boundary_match)
+  end)
+
+  it("grammar.boundary_match matches SQL Server row-count lines", function()
+    assert.is_true(adapter.grammar.boundary_match("(1 row affected)"))
+    assert.is_true(adapter.grammar.boundary_match("(42 rows affected)"))
+    assert.is_true(adapter.grammar.boundary_match("(0 rows affected)"))
+    assert.is_false(adapter.grammar.boundary_match("col1  col2"))
+    assert.is_false(adapter.grammar.boundary_match(""))
+  end)
+
+  it("grammar.row_count_pattern is a string", function()
+    assert.is_string(adapter.grammar.row_count_pattern)
+  end)
+
+  it("grammar.row_count_pattern captures the numeric count", function()
+    local count = ("(7 rows affected)"):match(adapter.grammar.row_count_pattern)
+    assert.equals("7", count)
+  end)
+
+  it("grammar.parse_chunk is a function", function()
+    assert.is_function(adapter.grammar.parse_chunk)
+  end)
+
+  it("grammar.include_dml_only is a boolean", function()
+    assert.is_boolean(adapter.grammar.include_dml_only)
+  end)
+end)
+
+-- ---------------------------------------------------------------------------
+-- test_connection — live SQL Server (skipped when sqlcmd unavailable)
+-- ---------------------------------------------------------------------------
 describe("enhance.db.sqlserver test_connection", function()
   local function sqlcmd_available()
     vim.fn.system({ "sqlcmd", "-?" })
@@ -200,3 +250,86 @@ describe("enhance.db.sqlserver test_connection", function()
   end)
 end)
 
+-- ---------------------------------------------------------------------------
+-- parse output — behavioral tests via parser.parse(lines, adapter.grammar)
+-- ---------------------------------------------------------------------------
+describe("enhance.db.sqlserver parse output", function()
+  it("parses a basic SELECT result", function()
+    local lines = {
+      "COLUMN_NAME|DATA_TYPE|CHARACTER_MAXIMUM_LENGTH|IS_NULLABLE",
+      "-----------|---------|------------------------|-----------",
+      "Id|bigint|NULL|NO",
+      "CompanyId|uniqueidentifier|NULL|NO",
+      "Key|nvarchar|200|NO",
+      "Value|nvarchar|-1|YES",
+      "(4 rows affected)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "COLUMN_NAME", "DATA_TYPE", "CHARACTER_MAXIMUM_LENGTH", "IS_NULLABLE" }, result.headers)
+    assert.equals(4, #result.rows)
+    assert.are.same({ "Id", "bigint", "NULL", "NO" }, result.rows[1])
+    assert.are.same({ "Value", "nvarchar", "-1", "YES" }, result.rows[4])
+    assert.equals("sqlserver", result.metadata.db_type)
+  end)
+
+  it("parses empty results (0 rows)", function()
+    local lines = { "COLUMN_NAME|DATA_TYPE", "-----------|---------|", "(0 rows affected)" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "COLUMN_NAME", "DATA_TYPE" }, result.headers)
+    assert.equals(0, #result.rows)
+  end)
+
+  it("parses single-column results", function()
+    local lines = { "Name", "----", "Alice", "Bob", "(2 rows affected)" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "Name" }, result.headers)
+    assert.equals(2, #result.rows)
+    assert.are.same({ "Alice" }, result.rows[1])
+  end)
+
+  it("detects multiple result sets via '(X rows affected)' markers", function()
+    local lines = {
+      "id|name", "--|----", "1|Alice", "2|Bob", "(2 rows affected)", "",
+      "email", "-----", "alice@test.com", "(1 rows affected)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_true(result.multiple_results)
+    assert.equals(2, #result.result_sets)
+    assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+    assert.equals(2, #result.result_sets[1].rows)
+    assert.are.same({ "email" }, result.result_sets[2].headers)
+    assert.equals(1, #result.result_sets[2].rows)
+  end)
+
+  it("does NOT set multiple_results for a single result set", function()
+    local lines = { "id|name", "--|----", "1|Alice", "(1 rows affected)" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_nil(result.multiple_results)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(1, #result.rows)
+  end)
+
+  it("extracts row_count from footer markers in each result set", function()
+    local lines = {
+      "id|name", "--|----", "1|Alice", "2|Bob", "(2 rows affected)", "",
+      "email", "-----", "alice@test.com", "(1 rows affected)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.equals(2, result.result_sets[1].metadata.row_count)
+    assert.equals(1, result.result_sets[2].metadata.row_count)
+  end)
+
+  it("extracts row_count for a single result set", function()
+    local lines = { "id|name", "--|----", "1|Alice", "(1 rows affected)" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.equals(1, result.metadata.row_count)
+  end)
+
+  it("replaces blank headers with positional fallbacks", function()
+    local lines = { " |Value", "------", "a|test", "(1 rows affected)" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "(column-1)", "Value" }, result.headers)
+    assert.equals(1, #result.rows)
+    assert.are.same({ "a", "test" }, result.rows[1])
+  end)
+end)

@@ -138,6 +138,32 @@ function M.setup_highlights()
     bold = true,
     default = true
   })
+
+  -- Explorer tree node highlight groups
+  vim.api.nvim_set_hl(0, 'EnhanceIconYellow', {
+    fg = '#f9e2af',  -- Yellow (catppuccin mocha yellow) - Level 0: DB connection icons
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceIconBlue', {
+    fg = '#89b4fa',  -- Blue - Level 1: category folders (Tables, Views, Buffers, etc.)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceIconCyan', {
+    fg = '#74c7ec',  -- Cyan (same as JSON cell) - Level 2: individual items
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceIconOrange', {
+    fg = '#fab387',  -- Orange - Level 3: actions + buffers with results
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceIconPurple', {
+    fg = '#cba6f7',  -- Purple - result buffers
+    default = true
+  })
 end
 
 ---Setup enhance.nvim with user configuration

@@ -49,6 +49,54 @@ function M.has_error(_output_lines)
   return false
 end
 
+---Private: normalize blank/empty column headers with positional fallbacks
+local function normalize_headers(headers)
+  local out = {}
+  for i, h in ipairs(headers) do
+    out[i] = (h == "" or h:match("^%s*$")) and string.format("(column-%d)", i) or h
+  end
+  return out
+end
+
+---Private: parse a single SQLite result set chunk.
+---Chunk layout: [1]=header line, [2]=separator line (dashes), [3+]=data rows.
+---@param chunk string[] Slice of output lines starting from the header line
+---@return table {headers: string[], rows: string[][]}
+local function parse_chunk(chunk)
+  if not chunk or #chunk < 2 then return { headers = {}, rows = {} } end
+  local header_line    = chunk[1]
+  local separator_line = chunk[2]
+  local headers, rows, col_pos, sp = {}, {}, {}, 1
+  for dg in separator_line:gmatch("%S+") do
+    local pos = separator_line:find(dg, sp, true)
+    table.insert(col_pos, { start = pos, width = #dg })
+    sp = pos + #dg
+  end
+  for h in header_line:gmatch("%S+") do table.insert(headers, h) end
+  while #headers < #col_pos do table.insert(headers, "") end
+  headers = normalize_headers(headers)
+  for i = 3, #chunk do
+    local line = chunk[i]
+    if line == "" or line:match("^[%-%s]+$") then break end
+    local row = {}
+    for _, col in ipairs(col_pos) do
+      table.insert(row, vim.trim(line:sub(col.start, col.start + col.width - 1)))
+    end
+    if #row > 0 then table.insert(rows, row) end
+  end
+  return { headers = headers, rows = rows }
+end
+
+---Grammar descriptor for the normalized parser pipeline.
+---SQLite uses separator mode: dash separator lines mark the START of each result set.
+---@type DbGrammar
+M.grammar = {
+  db_type        = "sqlite",
+  boundary_mode  = "separator",
+  boundary_match = function(line) return line:match("^[%-%s]+$") and line:match("%S") and true or false end,
+  parse_chunk    = parse_chunk,
+}
+
 ---Execute a single SQLite statement synchronously and return a parsed result.
 ---For DML statements, changes() is appended to capture the affected-row count.
 ---@param connection table SQLite connection
@@ -110,7 +158,7 @@ function M.execute_single(connection, statement_text)
   end
 
   local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, "sqlite")
+  local parsed_result = parser.parse(output_lines, M.grammar)
 
   return parsed_result, nil, duration, row_count
 end

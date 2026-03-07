@@ -2,6 +2,7 @@
 -- Contract + behavioral tests for the PostgreSQL database module
 
 local adapter = require("enhance.db.postgres")
+local parser  = require("enhance.parser")
 
 -- ---------------------------------------------------------------------------
 -- Contract tests — every adapter must satisfy these
@@ -138,6 +139,38 @@ describe("enhance.db.postgres has_error", function()
 end)
 
 -- ---------------------------------------------------------------------------
+-- grammar descriptor — pipeline contract
+-- ---------------------------------------------------------------------------
+describe("enhance.db.postgres grammar", function()
+  it("exposes M.grammar as a table", function()
+    assert.is_table(adapter.grammar)
+  end)
+
+  it("grammar.db_type is 'postgresql'", function()
+    assert.equals("postgresql", adapter.grammar.db_type)
+  end)
+
+  it("grammar.boundary_mode is 'separator'", function()
+    assert.equals("separator", adapter.grammar.boundary_mode)
+  end)
+
+  it("grammar.boundary_match is a function", function()
+    assert.is_function(adapter.grammar.boundary_match)
+  end)
+
+  it("grammar.boundary_match matches PostgreSQL separator lines", function()
+    assert.is_true(adapter.grammar.boundary_match("----+-----"))
+    assert.is_true(adapter.grammar.boundary_match("----------"))
+    assert.is_false(adapter.grammar.boundary_match("col1  col2"))
+    assert.is_false(adapter.grammar.boundary_match(""))
+  end)
+
+  it("grammar.parse_chunk is a function", function()
+    assert.is_function(adapter.grammar.parse_chunk)
+  end)
+end)
+
+-- ---------------------------------------------------------------------------
 -- test_connection — live PostgreSQL (skipped when psql unavailable)
 -- ---------------------------------------------------------------------------
 describe("enhance.db.postgres test_connection", function()
@@ -159,3 +192,81 @@ describe("enhance.db.postgres test_connection", function()
   end)
 end)
 
+-- ---------------------------------------------------------------------------
+-- parse output — behavioral tests via parser.parse(lines, adapter.grammar)
+-- ---------------------------------------------------------------------------
+describe("enhance.db.postgres parse output", function()
+  it("parses a basic SELECT result", function()
+    local lines = {
+      " id | name  ",
+      "----+-------",
+      "  1 | Alice",
+      "  2 | Bob",
+      "(2 rows)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(2, #result.rows)
+    assert.are.same({ "1", "Alice" }, result.rows[1])
+    assert.are.same({ "2", "Bob" }, result.rows[2])
+    assert.equals("postgresql", result.metadata.db_type)
+  end)
+
+  it("parses empty results (0 rows)", function()
+    local lines = {
+      " id | name",
+      "----+-----",
+      "(0 rows)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(0, #result.rows)
+  end)
+
+  it("detects multiple result sets via separator lines", function()
+    local lines = {
+      " id | name  ",
+      "----+-------",
+      "  1 | Alice",
+      "  2 | Bob",
+      "(2 rows)",
+      "",
+      " email",
+      "------",
+      " alice@test.com",
+      "(1 rows)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_true(result.multiple_results)
+    assert.equals(2, #result.result_sets)
+    assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+    assert.equals(2, #result.result_sets[1].rows)
+    assert.are.same({ "email" }, result.result_sets[2].headers)
+    assert.equals(1, #result.result_sets[2].rows)
+  end)
+
+  it("does NOT set multiple_results for a single result set", function()
+    local lines = {
+      " id | name",
+      "----+-----",
+      "  1 | Alice",
+      "(1 rows)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_nil(result.multiple_results)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(1, #result.rows)
+  end)
+
+  it("replaces blank headers with positional fallbacks", function()
+    local lines = {
+      "   | name",
+      "---+-----",
+      " a | Bob",
+      "(1 row)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "(column-1)", "name" }, result.headers)
+    assert.equals(1, #result.rows)
+  end)
+end)

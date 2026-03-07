@@ -988,7 +988,7 @@ local function build_explorer_content()
 				for _, query_info in ipairs(saved_queries) do
 					local display_name = get_buffer_display_name(query_info.filepath)
 					local saved_query_icon = get_node_icon("saved_query")
-					table.insert(lines, string.format("      %s  %s", saved_query_icon, display_name))
+					table.insert(lines, string.format("        %s  %s", saved_query_icon, display_name))
 				end
 			end
 
@@ -1177,6 +1177,25 @@ local function apply_status_highlights()
 			vim.api.nvim_buf_add_highlight(explorer_buf, ns_id, "EnhanceDisconnected", line_num - 1, 0, 1)
 		end
 
+		-- Level 0: DB connection icon (yellow) - connection lines start with ✓ or ✗
+		if line:match("^[✓✗]") then
+			-- Build icon list from get_db_icon to guarantee exact byte matches
+			local seen_icons = {}
+			for _, db_type in ipairs({ "sqlite", "sqlserver", "mysql", "postgresql", "unknown" }) do
+				local db_icon = get_db_icon(db_type)
+				if not seen_icons[db_icon] then
+					seen_icons[db_icon] = true
+					local di_start, di_end = line:find(db_icon, 1, true)
+					if di_start then
+						vim.api.nvim_buf_add_highlight(
+							explorer_buf, ns_id, "EnhanceIconYellow", line_num - 1, di_start - 1, di_end
+						)
+						break
+					end
+				end
+			end
+		end
+
 		-- Highlight count indicators like "(41)" in red/orange
 		local count_start, count_end = line:find("%(%d+%)")
 		if count_start then
@@ -1190,7 +1209,6 @@ local function apply_status_highlights()
 			)
 		end
 
-		-- Highlight blue icons (New Query, Buffers, Saved Queries, Tables, individual items)
 		-- Find icon positions using string.find for accurate byte positions
 		local icon_start, icon_end
 
@@ -1221,14 +1239,14 @@ local function apply_status_highlights()
 			)
 		end
 
-		-- Individual buffer icon (blue for no results, orange for has results)
+		-- Individual buffer icon (cyan for no results, orange for has results)
 		local buffer_item_icon = get_node_icon("buffer_item")
 		icon_start, icon_end = line:find(buffer_item_icon, 1, true)
 		if icon_start then
 			-- Check if this buffer has an arrow (indicates it has results)
 			local has_arrow = line:find("▸") or line:find("▾")
 			if has_arrow and has_arrow < icon_start then
-				-- Buffer with results - orange
+				-- Buffer with results - orange (Level 3 treatment)
 				vim.api.nvim_buf_add_highlight(
 					explorer_buf,
 					ns_id,
@@ -1238,11 +1256,11 @@ local function apply_status_highlights()
 					icon_end
 				)
 			else
-				-- Buffer without results - blue
+				-- Buffer without results - cyan (Level 2 item)
 				vim.api.nvim_buf_add_highlight(
 					explorer_buf,
 					ns_id,
-					"EnhanceIconBlue",
+					"EnhanceIconCyan",
 					line_num - 1,
 					icon_start - 1,
 					icon_end
@@ -1264,14 +1282,14 @@ local function apply_status_highlights()
 			)
 		end
 
-		-- Individual saved query icon (blue)
+		-- Individual saved query icon (cyan - Level 2 item)
 		local saved_item_icon = get_node_icon("saved_query")
 		icon_start, icon_end = line:find(saved_item_icon, 1, true)
 		if icon_start and not line:match("Saved Queries") then
 			vim.api.nvim_buf_add_highlight(
 				explorer_buf,
 				ns_id,
-				"EnhanceIconBlue",
+				"EnhanceIconCyan",
 				line_num - 1,
 				icon_start - 1,
 				icon_end
@@ -1291,10 +1309,10 @@ local function apply_status_highlights()
 			)
 		end
 
-		-- Individual table icon: 󰓫 (blue for tables, orange for sub-items)
+		-- Individual table icon: 󰓫 (cyan for table/temp_table items, orange for sub-item actions)
 		icon_start, icon_end = line:find("󰓫")
 		if icon_start then
-			-- Orange for table/view/proc/func sub-items
+			-- Orange for Level 3 action sub-items
 			if
 				line:match("Columns")
 				or line:match("[Ll]ist")
@@ -1321,11 +1339,119 @@ local function apply_status_highlights()
 					icon_end
 				)
 			else
-				-- Blue for table items
+				-- Cyan for Level 2 individual table/temp_table items
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconCyan",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			end
+		end
+
+		-- Views icon: 󰒉 (blue for folder with count, cyan for individual items)
+		icon_start, icon_end = line:find("󰒉")
+		if icon_start then
+			if line:match("%(%d+%)") then
+				-- Folder line (has count) - blue Level 1
 				vim.api.nvim_buf_add_highlight(
 					explorer_buf,
 					ns_id,
 					"EnhanceIconBlue",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			elseif line:match("ALTER") or line:match("CREATE") or line:match("DROP") then
+				-- Action sub-item - orange Level 3
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconOrange",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			else
+				-- Individual view item - cyan Level 2
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconCyan",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			end
+		end
+
+		-- Procedures icon: 󰊢 (blue for folder with count, cyan for individual items)
+		icon_start, icon_end = line:find("󰊢")
+		if icon_start then
+			if line:match("%(%d+%)") then
+				-- Folder line - blue Level 1
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconBlue",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			elseif line:match("Parameters") or line:match("EXECUTE") or line:match("ALTER") then
+				-- Action sub-item - orange Level 3
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconOrange",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			else
+				-- Individual procedure item - cyan Level 2
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconCyan",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			end
+		end
+
+		-- Functions icon: 󰡱 (blue for folder with count, cyan for individual items)
+		icon_start, icon_end = line:find("󰡱")
+		if icon_start then
+			if line:match("%(%d+%)") then
+				-- Folder line - blue Level 1
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconBlue",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			elseif line:match("Parameters") or line:match("EXECUTE") or line:match("ALTER") then
+				-- Action sub-item - orange Level 3
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconOrange",
+					line_num - 1,
+					icon_start - 1,
+					icon_end
+				)
+			else
+				-- Individual function item - cyan Level 2
+				vim.api.nvim_buf_add_highlight(
+					explorer_buf,
+					ns_id,
+					"EnhanceIconCyan",
 					line_num - 1,
 					icon_start - 1,
 					icon_end
@@ -3499,13 +3625,15 @@ function M.start()
 		vim.bo[explorer_buf].bufhidden = "hide"
 		vim.bo[explorer_buf].modifiable = false
 
-		-- Define highlight groups
+		-- Define highlight groups (also defined in init.lua setup_highlights for user overrides)
 		vim.api.nvim_set_hl(0, "EnhanceConnected", { fg = "#a6e3a1", bold = true }) -- Green
 		vim.api.nvim_set_hl(0, "EnhanceDisconnected", { fg = "#f38ba8", bold = true }) -- Red
 		vim.api.nvim_set_hl(0, "EnhanceCount", { fg = "#f38ba8" }) -- Red/orange for counts
-		vim.api.nvim_set_hl(0, "EnhanceIconBlue", { fg = "#89b4fa" }) -- Blue for folder icons and items
-		vim.api.nvim_set_hl(0, "EnhanceIconOrange", { fg = "#fab387" }) -- Orange for parent/associated queries
-		vim.api.nvim_set_hl(0, "EnhanceIconPurple", { fg = "#cba6f7" }) -- Purple for result buffers
+		vim.api.nvim_set_hl(0, "EnhanceIconYellow", { fg = "#f9e2af" }) -- Yellow: Level 0 DB connection icons
+		vim.api.nvim_set_hl(0, "EnhanceIconBlue", { fg = "#89b4fa" }) -- Blue: Level 1 category folders
+		vim.api.nvim_set_hl(0, "EnhanceIconCyan", { fg = "#74c7ec" }) -- Cyan: Level 2 individual items
+		vim.api.nvim_set_hl(0, "EnhanceIconOrange", { fg = "#fab387" }) -- Orange: Level 3 actions + buffers with results
+		vim.api.nvim_set_hl(0, "EnhanceIconPurple", { fg = "#cba6f7" }) -- Purple: result buffers
 
 		-- Set up keymaps
 		vim.keymap.set("n", "<CR>", function()

@@ -156,6 +156,39 @@ describe("enhance.db.sqlite", function()
   end)
 
   -- ----------------------------------------------------------------
+  -- grammar descriptor
+  -- ----------------------------------------------------------------
+  describe("grammar descriptor", function()
+    it("exposes M.grammar as a table", function()
+      assert.is_table(adapter.grammar)
+    end)
+
+    it("grammar.db_type is 'sqlite'", function()
+      assert.equals("sqlite", adapter.grammar.db_type)
+    end)
+
+    it("grammar.boundary_mode is 'separator'", function()
+      assert.equals("separator", adapter.grammar.boundary_mode)
+    end)
+
+    it("grammar.boundary_match is a function", function()
+      assert.is_function(adapter.grammar.boundary_match)
+    end)
+
+    it("grammar.boundary_match matches SQLite separator lines", function()
+      assert.is_true(adapter.grammar.boundary_match("----------"))
+      assert.is_true(adapter.grammar.boundary_match("---  ---"))
+      assert.is_false(adapter.grammar.boundary_match("----+-----"))
+      assert.is_false(adapter.grammar.boundary_match("col1  col2"))
+      assert.is_false(adapter.grammar.boundary_match(""))
+    end)
+
+    it("grammar.parse_chunk is a function", function()
+      assert.is_function(adapter.grammar.parse_chunk)
+    end)
+  end)
+
+  -- ----------------------------------------------------------------
   -- execute_single
   -- ----------------------------------------------------------------
   describe("execute_single", function()
@@ -210,3 +243,82 @@ describe("enhance.db.sqlite", function()
   end)
 end)
 
+-- ---------------------------------------------------------------------------
+-- parse output — behavioral tests via parser.parse(lines, adapter.grammar)
+-- ---------------------------------------------------------------------------
+describe("enhance.db.sqlite parse output", function()
+  local adapter = require("enhance.db.sqlite")
+  local parser  = require("enhance.parser")
+
+  it("parses a basic SELECT result", function()
+    local lines = {
+      "cid  name         type     notnull  dflt_value  pk",
+      "---  -----------  -------  -------  ----------  --",
+      "0    ID           INTEGER  0                    1 ",
+      "1    Name         TEXT     1                    0 ",
+      "2    Description  TEXT     0                    0 ",
+      "",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "cid", "name", "type", "notnull", "dflt_value", "pk" }, result.headers)
+    assert.equals(3, #result.rows)
+    assert.are.same({ "0", "ID", "INTEGER", "0", "", "1" }, result.rows[1])
+    assert.equals("sqlite", result.metadata.db_type)
+  end)
+
+  it("parses empty results (0 rows)", function()
+    local lines = { "id  name", "--  ----", "" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(0, #result.rows)
+  end)
+
+  it("does NOT set multiple_results for a single result set", function()
+    local lines = { "id  name ", "--  -----", "1   Alice", "2   Bob  " }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_nil(result.multiple_results)
+    assert.are.same({ "id", "name" }, result.headers)
+    assert.equals(2, #result.rows)
+  end)
+
+  it("detects two result sets with the same columns", function()
+    local lines = {
+      "id  name   email         ",
+      "--  -----  --------------",
+      "1   Alice  alice@test.com",
+      "2   Bob    bob@test.com  ",
+      "id  name   email         ",
+      "--  -----  --------------",
+      "1   Alice  alice@test.com",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_true(result.multiple_results)
+    assert.equals(2, #result.result_sets)
+    assert.are.same({ "id", "name", "email" }, result.result_sets[1].headers)
+    assert.equals(2, #result.result_sets[1].rows)
+    assert.are.same({ "id", "name", "email" }, result.result_sets[2].headers)
+    assert.equals(1, #result.result_sets[2].rows)
+  end)
+
+  it("detects two result sets with different columns", function()
+    local lines = {
+      "id  name ", "--  -----", "1   Alice", "2   Bob  ",
+      "name   email         ", "-----  --------------", "Alice  alice@test.com",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.is_true(result.multiple_results)
+    assert.equals(2, #result.result_sets)
+    assert.are.same({ "id", "name" }, result.result_sets[1].headers)
+    assert.equals(2, #result.result_sets[1].rows)
+    assert.are.same({ "name", "email" }, result.result_sets[2].headers)
+    assert.equals(1, #result.result_sets[2].rows)
+  end)
+
+  it("replaces blank headers with positional fallbacks", function()
+    local lines = { "", "-", "a" }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "(column-1)" }, result.headers)
+    assert.equals(1, #result.rows)
+    assert.are.same({ "a" }, result.rows[1])
+  end)
+end)

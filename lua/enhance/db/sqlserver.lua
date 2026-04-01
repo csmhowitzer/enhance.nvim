@@ -52,7 +52,7 @@ function M.build_cmd(connection, opts)
     table.insert(cmd, "|")
     table.insert(cmd, "-W")
     table.insert(cmd, "-y")
-    table.insert(cmd, "8000")
+    table.insert(cmd, "256") -- 256 is the sqlcmd default; kept explicit so future agents see the flag.
   end
 
   -- Suppress headers (used for connection tests)

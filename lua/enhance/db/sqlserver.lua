@@ -51,8 +51,11 @@ function M.build_cmd(connection, opts)
     table.insert(cmd, "-s")
     table.insert(cmd, "|")
     table.insert(cmd, "-W")
-    table.insert(cmd, "-y")
-    table.insert(cmd, "256") -- 256 is the sqlcmd default; kept explicit so future agents see the flag.
+    -- Note: -y (variable-length type display width) is intentionally omitted.
+    -- On Windows sqlcmd, -y and -W are mutually exclusive and will error.
+    -- sqlcmd defaults to 256 chars for varchar(max)/nvarchar(max) without -y.
+    -- This is a known constraint that affects the truncated column viewer design
+    -- (see enhance-dev-notes/HANDOFF_CONTEXT.md for details).
   end
 
   -- Suppress headers (used for connection tests)

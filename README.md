@@ -164,7 +164,7 @@ require("enhance").setup({
 | `keymaps.save_query` | string | `:w` | Keymap to save query |
 | `ui.results_position` | string | `"split"` | Results window position |
 | `ui.show_query_time` | boolean | `true` | Show query execution time |
-| `ui.dashboard.card_border` | string | `"EnhanceDashboardBorder"` | Highlight group for database dashboard card borders (defaults to yellow `#f9e2af`) |
+| `ui.dashboard.card_border` | string | `"EnhanceDashboardBorder"` | Highlight group for database dashboard card borders (defaults to purple `#cba6f7`) |
 | `status_line.enabled` | boolean | `true` | Enable status line in results |
 | `status_line.position` | string | `"top"` | Status line position: `"top"`, `"bottom"`, `"none"` |
 
@@ -308,7 +308,10 @@ and `?` for help. The connected dashboard spells the database name in its top
 banner (wrapping long names) and keeps these actions beneath it. It shows
 table/view counts, saved query files, persisted temp query files, table names,
 and connection details. Unsaved in-memory temp buffers are not included in the
-on-disk count. Views are shown as unavailable for databases without explorer
+on-disk count. **DATABASE METADATA** groups the overview cards. Database card
+borders and section headings are purple, card titles and labels are blue, and
+chart descriptions use the subtitle's muted italic style. Views are shown as
+unavailable for databases without explorer
 view support. For SQL Server, a seventh overview card shows **Database Data Size**:
 space used across all database data files (excluding transaction logs), in kB,
 MB, or GB. It loads in the background and shows `Unavailable` if the lookup
@@ -366,7 +369,7 @@ To customize the database dashboard card border, set a highlight group in setup:
 
 ```lua
 require('enhance').setup({ ui = { dashboard = { card_border = 'MyDashboardBorder' } } })
-vim.api.nvim_set_hl(0, 'MyDashboardBorder', { fg = '#f9e2af' })
+vim.api.nvim_set_hl(0, 'MyDashboardBorder', { fg = '#cba6f7' })
 ```
 
 ### SQL completion

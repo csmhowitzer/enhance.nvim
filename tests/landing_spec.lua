@@ -148,6 +148,45 @@ describe('enhance landing page', function()
     assert.is_nil(text:find('DATABASE DATA SIZE', 1, true))
   end)
 
+  it('styles database card borders, headings, labels, and descriptions', function()
+    local win = vim.api.nvim_get_current_win()
+    local buf = require('enhance.landing').show_dashboard(win,
+      { name = 'Demo', type = 'sqlserver', database = 'demo' }, { 'Artists' }, 2,
+      { { name = 'dbo.Artists', count = 2500 } }, nil, { 'Artists' },
+      { { name = 'dbo.Artists', count = 2500 } },
+      { { name = 'dbo.Artists', columns = 3, indexes = 2, data_kb = 1536 } }, 2048)
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local marks = vim.api.nvim_buf_get_extmarks(buf,
+      vim.api.nvim_create_namespace('enhance_landing'), 0, -1, { details = true })
+    local function colored(token, group)
+      for row, line in ipairs(lines) do
+        local col = line:find(token, 1, true)
+        if col then
+          for _, mark in ipairs(marks) do
+            if mark[2] == row - 1 and mark[3] == col - 1 and mark[4].hl_group == group then
+              return true
+            end
+          end
+        end
+      end
+      return false
+    end
+    for _, heading in ipairs({ 'DATABASE METADATA', 'DATABASE OBJECTS', 'ROWS PER TABLE', 'PINNED METADATA' }) do
+      assert.is_true(colored(heading, 'EnhanceDashboardCategory'))
+    end
+    for _, label in ipairs({ 'TABLES', 'DATABASE DATA SIZE', 'CONNECTION', 'Database:',
+      'ESTIMATED ROWS', 'COLUMNS' }) do
+      assert.is_true(colored(label, 'EnhanceDashboardLabel'))
+    end
+    for _, description in ipairs({ 'Top tables by', 'Estimated rows',
+      'SQL Server catalog' }) do
+      assert.is_true(colored(description, 'EnhanceDashboardMetaDescription'))
+    end
+    assert.is_true(colored('╭', 'EnhanceDashboardBorder'))
+    require('enhance').setup_highlights()
+    assert.equals(0xcba6f7, vim.api.nvim_get_hl(0, { name = 'EnhanceDashboardBorder' }).fg)
+  end)
+
   it('displays pinned SQL Server estimates alphabetically, independent of top eight', function()
     local buf = require('enhance.landing').show_dashboard(vim.api.nvim_get_current_win(),
       { name = 'Demo', type = 'sqlserver', database = 'demo' }, {}, 0, {}, nil,

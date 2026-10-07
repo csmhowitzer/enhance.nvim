@@ -460,7 +460,8 @@ function M.show_dashboard(win, connection, tables, view_count, row_counts, local
     cards[#cards + 1] = panel('DATABASE DATA SIZE', { size }, card_width)
   end
 
-  local details = join_panels(cards, columns)
+  local details = { 'DATABASE METADATA' }
+  vim.list_extend(details, join_panels(cards, columns))
   details[#details + 1] = 'DATABASE OBJECTS'
   local names = {}
   for i = 1, math.min(5, #tables) do
@@ -521,6 +522,58 @@ function M.show_dashboard(win, connection, tables, view_count, row_counts, local
     'r   Refresh',
     '?   Help',
   }, true, heading)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local categories = {
+    ['DATABASE METADATA'] = true, ['DATABASE OBJECTS'] = true,
+    ['ROWS PER TABLE'] = true, ['PINNED METADATA'] = true, ['PINNED TABLES'] = true,
+  }
+  local descriptions = {
+    'Top tables by', 'Estimated rows', 'SQL Server catalog',
+  }
+  for i, line in ipairs(lines) do
+    local category = line:match('^%s*(.-)%s*$')
+    if categories[category] then
+      local col = line:find(category, 1, true)
+      vim.api.nvim_buf_add_highlight(buf, namespace, 'EnhanceDashboardCategory', i - 1,
+        col - 1, col - 1 + #category)
+    end
+    if lines[i - 1] and lines[i - 1]:find('╭', 1, true) then
+      local pos = 1
+      while true do
+        local start = line:find('│  ', pos, true)
+        if not start then break end
+        local finish = line:find('│', start + #'│  ', true)
+        if not finish then break end
+        local title = line:sub(start + #'│  ', finish - 1):match('^(.-)%s*$')
+        if title ~= '' then
+          local col = start - 1 + #'│  '
+          vim.api.nvim_buf_add_highlight(buf, namespace, 'EnhanceDashboardLabel', i - 1,
+            col, col + #title)
+        end
+        pos = finish + #'│'
+      end
+    end
+    for _, label in ipairs({ 'Database:', 'Server:', 'Engine:' }) do
+      local start = line:find('│  ' .. label, 1, true)
+      if start then
+        local col = start - 1 + #'│  '
+        vim.api.nvim_buf_add_highlight(buf, namespace, 'EnhanceDashboardLabel', i - 1,
+          col, col + #label)
+      end
+    end
+    for _, description in ipairs(descriptions) do
+      local start = line:find('│  ' .. description, 1, true)
+      if start then
+        local col = start - 1 + #'│  '
+        local finish = line:find('│', col + 1, true)
+        local visible = finish and line:sub(col + 1, finish - 1):match('^(.-)%s*$')
+        if visible then
+          vim.api.nvim_buf_add_highlight(buf, namespace, 'EnhanceDashboardMetaDescription', i - 1,
+            col, col + #visible)
+        end
+      end
+    end
+  end
   vim.keymap.set('n', 'n', function() require('enhance.explorer').new_query() end,
     { buffer = buf, desc = 'New database query' })
   vim.keymap.set('n', 'e', function() require('enhance.explorer').open() end,

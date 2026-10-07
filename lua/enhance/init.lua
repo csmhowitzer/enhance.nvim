@@ -158,7 +158,7 @@ function M.setup_highlights()
   })
 
   vim.api.nvim_set_hl(0, 'EnhanceDashboardBorder', {
-    fg = '#f9e2af', -- Same yellow as connection icons
+    fg = '#cba6f7', -- Purple database card borders
     default = true
   })
 

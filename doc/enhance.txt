@@ -114,7 +114,7 @@ Configuration options:
 
 {ui.dashboard.card_border}                     *enhance-config-dashboard-border*
     Type: `string` (highlight group)
-    Default: `EnhanceDashboardBorder` (yellow, #f9e2af)
+    Default: `EnhanceDashboardBorder` (purple, #cba6f7)
 
     Highlight group for database dashboard card borders. Define your own
     highlight and set this option to its group name to customize the color.
@@ -130,6 +130,8 @@ Configuration options:
     database name in its banner (wrapping long names), then shows table/view
     counts, saved query files, temp query files persisted on disk, table names,
     and connection details in panels. Unsaved temp buffers are not counted.
+    DATABASE METADATA groups the top cards. Card borders and section headings
+    are purple, titles and labels blue, and chart descriptions muted italic.
     The dashboard remains available under its connection in the explorer:
     press <CR> or o on Dashboard to return to it in the editor pane. It does
     not open a separate Neovim tab. Views are shown as unavailable when the

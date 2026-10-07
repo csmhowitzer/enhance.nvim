@@ -49,6 +49,11 @@ local db_capabilities = {
 -- Format: { ["example.db"] = { {bufnr=5, filepath="/path/to/file.sql"}, ... } }
 local connection_buffers = {}
 
+---@type table<string, integer> Hidden dashboard buffers, keyed by connection name
+local dashboard_buffers = {}
+local dashboard_rows = {}
+local dashboard_needs_update = {}
+
 ---@type integer? Last results buffer number
 local last_results_buf = nil
 
@@ -876,6 +881,8 @@ local function get_node_icon(node_type)
 		return "󰓫" -- vim-dadbod-ui table icon
 	elseif node_type == "new_query" then
 		return "󰓰" -- vim-dadbod-ui new query icon
+	elseif node_type == "dashboard" then
+		return "󰕮" -- connection dashboard
 	elseif node_type == "table_subitem" then
 		return "󰓫" -- reuse table icon for sub-items
 	elseif node_type == "buffer" then
@@ -932,6 +939,7 @@ local function build_explorer_content()
 			-- New Query option
 			local new_query_icon = get_node_icon("new_query")
 			table.insert(lines, string.format("    %s  New Query", new_query_icon))
+			table.insert(lines, string.format("    %s  Dashboard", get_node_icon("dashboard")))
 
 			-- Buffers section with count
 			local buffers = get_buffers_for_connection(conn.name)
@@ -1222,6 +1230,13 @@ local function apply_status_highlights()
 				line_num - 1,
 				icon_start - 1,
 				icon_end
+			)
+		end
+		local dashboard_icon = get_node_icon("dashboard")
+		icon_start, icon_end = line:find(dashboard_icon, 1, true)
+		if icon_start and line:match("Dashboard") then
+			vim.api.nvim_buf_add_highlight(
+				explorer_buf, ns_id, "EnhanceIconBlue", line_num - 1, icon_start - 1, icon_end
 			)
 		end
 
@@ -1922,6 +1937,11 @@ function parse_line(line, line_num)
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "new_query", conn_name = parent_conn }
+			end
+		elseif name == "Dashboard" then
+			local parent_conn = find_parent_connection(line_num)
+			if parent_conn then
+				return { type = "dashboard", conn_name = parent_conn }
 			end
 		elseif name:match("Buffers") then
 			local parent_conn = find_parent_connection(line_num)
@@ -3084,6 +3104,9 @@ local function handle_open(line_num)
 	if info.type == "new_query" then
 		-- Create new empty query buffer
 		M.new_query()
+	elseif info.type == "dashboard" then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then M.open_dashboard(conn) end
 	elseif info.type == "buffer_item" then
 		-- Open buffer (regardless of whether it has results)
 		local conn = connections.get_connection(info.conn_name)
@@ -3351,10 +3374,11 @@ local function handle_enter(line_num)
 		connections.set_current(conn)
 		active_connection = conn -- Track active connection for new queries
 
-		-- Convert current query editor buffer to tmp file (if it doesn't have one)
+		-- Only convert the legacy empty Enhance editor, never a user's open file or the landing page.
 		if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
 			local query_buf = vim.api.nvim_win_get_buf(query_editor_win)
-			if query_buf and vim.api.nvim_buf_is_valid(query_buf) then
+			if query_buf and vim.api.nvim_buf_is_valid(query_buf)
+				and vim.api.nvim_buf_get_name(query_buf) == "Enhance: Editor" then
 				-- Only convert if buffer doesn't already have a connection
 				if not vim.b[query_buf].enhance_connection then
 					-- Get current buffer content
@@ -3387,6 +3411,9 @@ local function handle_enter(line_num)
 
 		-- Refresh to show checkmark and expanded tree
 		refresh_explorer()
+	elseif info.type == "dashboard" then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then M.open_dashboard(conn) end
 	elseif info.type == "buffers" then
 		-- Toggle buffers folder expansion
 		local conn = connections.get_connection(info.conn_name)
@@ -3482,6 +3509,13 @@ function M.start()
 		vim.notify("Enhance workspace already started", vim.log.levels.INFO)
 		return
 	end
+	local initial_buf = vim.api.nvim_get_current_buf()
+	local initial_lines = vim.api.nvim_buf_get_lines(initial_buf, 0, -1, false)
+	local is_empty_buffer = vim.bo[initial_buf].filetype == "snacks_dashboard"
+		or (vim.api.nvim_buf_get_name(initial_buf) == ""
+			and vim.bo[initial_buf].buftype == ""
+			and not vim.bo[initial_buf].modified
+			and #initial_lines == 1 and initial_lines[1] == "")
 
 	-- Use current tab for workspace (no new tab creation)
 	explorer_tab = vim.api.nvim_get_current_tabpage()
@@ -3734,29 +3768,108 @@ function M.start()
 	-- Build content AFTER window is created
 	refresh_explorer()
 
-	-- Create empty query editor on the right
+	-- Keep the right window for the landing page or the user's existing buffer.
 	-- Move to the right window (created by vsplit)
 	vim.cmd("wincmd l")
 
 	-- Track the query editor window
 	query_editor_win = vim.api.nvim_get_current_win()
 
-	-- Create a new empty buffer for query editing
-	local query_buf = vim.api.nvim_create_buf(true, false) -- listed, not scratch
-	vim.api.nvim_win_set_buf(query_editor_win, query_buf)
-
-	-- Set SQL filetype for syntax highlighting and LSP
-	vim.bo[query_buf].filetype = "sql"
-	vim.bo[query_buf].buftype = ""
-
-	-- Set a descriptive buffer name
-	pcall(vim.api.nvim_buf_set_name, query_buf, "Enhance: Editor")
-
-	-- Set up query execution keymaps (same as <leader>dq)
-	require("enhance.query").setup_keymaps(query_buf)
+	if is_empty_buffer then
+		require("enhance.landing").show_welcome(query_editor_win)
+	end
 
 	-- Focus the query editor so user can start typing
 	vim.api.nvim_set_current_win(query_editor_win)
+end
+
+---Replace the welcome page with the connected database overview.
+---Do not replace a query or another user buffer in the editor window.
+---@param connection table
+---@param force boolean? Reopen the dashboard even when another buffer is visible
+---@param row_counts table[]|false? Previously loaded catalog estimates
+---@param skip_fetch boolean? Do not repeat an already completed catalog lookup
+function M.show_dashboard(connection, force, row_counts, skip_fetch)
+	if not workspace_initialized then
+		return
+	end
+	active_connection = connection
+	if not query_editor_win or not vim.api.nvim_win_is_valid(query_editor_win) then
+		return
+	end
+	local buf = vim.api.nvim_win_get_buf(query_editor_win)
+	if not force and not require("enhance.landing").is_landing(buf) then
+		return
+	end
+	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+	local view_count = (db_type == "sqlserver" or db_type == "mssql") and #fetch_views(connection) or nil
+	local landing = require("enhance.landing")
+	local tables = fetch_tables(connection)
+	local temp_buffers = 0
+	for _, buffer in ipairs(get_buffers_for_connection(connection.name)) do
+		if vim.fn.filereadable(buffer.filepath) == 1 then
+			temp_buffers = temp_buffers + 1
+		end
+	end
+	local local_counts = {
+		saved_queries = #get_saved_queries_for_connection(connection.name),
+		temp_buffers = temp_buffers,
+	}
+	local win = query_editor_win
+	local previous_dashboard = dashboard_buffers[connection.name]
+	local shown_buf = landing.show_dashboard(win, connection, tables, view_count, row_counts, local_counts)
+	dashboard_buffers[connection.name] = shown_buf
+	dashboard_needs_update[connection.name] = nil
+	if previous_dashboard and previous_dashboard ~= shown_buf and vim.api.nvim_buf_is_valid(previous_dashboard) then
+		vim.api.nvim_buf_delete(previous_dashboard, { force = true })
+	end
+	if (db_type == "sqlserver" or db_type == "mssql") and not skip_fetch then
+		require("enhance.dashboard_data").fetch_sqlserver_rows(connection, function(rows)
+			if dashboard_buffers[connection.name] ~= shown_buf then return end
+			dashboard_rows[connection.name] = rows or false
+			if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == shown_buf then
+				dashboard_buffers[connection.name] = landing.show_dashboard(
+					win, connection, tables, view_count, rows or false, local_counts)
+			else
+				dashboard_needs_update[connection.name] = true
+			end
+		end)
+	end
+end
+
+---Return to the active connection's dashboard from the explorer.
+---@param connection table
+function M.open_dashboard(connection)
+	local current = require("enhance.connections").get_current()
+	if not current or current.name ~= connection.name then
+		vim.notify("Connect to " .. connection.name .. " before opening its dashboard", vim.log.levels.WARN)
+		return
+	end
+	if not query_editor_win or not vim.api.nvim_win_is_valid(query_editor_win) then return end
+	vim.api.nvim_set_current_win(query_editor_win)
+	local cached = dashboard_buffers[connection.name]
+	if cached and vim.api.nvim_buf_is_valid(cached) and not dashboard_needs_update[connection.name] then
+		if vim.api.nvim_win_get_buf(query_editor_win) ~= cached then
+			require("enhance.landing").open_existing(query_editor_win, cached)
+		end
+	else
+		local rows = dashboard_rows[connection.name]
+		M.show_dashboard(connection, true, rows, rows ~= nil)
+	end
+end
+
+---Reload this connection's dashboard metadata and catalog chart on demand.
+---@param connection table
+function M.refresh_dashboard(connection)
+	if not query_editor_win or not vim.api.nvim_win_is_valid(query_editor_win)
+		or not require("enhance.landing").is_landing(vim.api.nvim_win_get_buf(query_editor_win)) then
+		return
+	end
+	table_cache["tables:" .. connection.name] = nil
+	object_cache["views:" .. connection.name] = nil
+	dashboard_rows[connection.name] = nil
+	M.show_dashboard(connection)
+	refresh_explorer()
 end
 
 ---Open explorer drawer (show if hidden)
@@ -3824,6 +3937,11 @@ function M.stop()
 		-- Force close the tab
 		vim.cmd("tabclose!")
 	end
+	for _, buf in pairs(dashboard_buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			vim.api.nvim_buf_delete(buf, { force = true })
+		end
+	end
 
 	-- Reset state
 	workspace_initialized = false
@@ -3835,6 +3953,9 @@ function M.stop()
 	expanded = {}
 	table_cache = {}
 	connection_buffers = {}
+	dashboard_buffers = {}
+	dashboard_rows = {}
+	dashboard_needs_update = {}
 
 	vim.notify("Enhance workspace stopped", vim.log.levels.INFO)
 end

@@ -116,9 +116,20 @@ Configuration options:
 4. COMMANDS                                              *enhance-commands*
 
 :EnhanceStart                                            *:EnhanceStart*
-    Start enhance workspace with explorer drawer and query editor.
-    Opens a three-panel layout: explorer (left), query editor (center),
-    and results (bottom, hidden until first query execution).
+    Start Enhance with the explorer (left) and a welcome page (right) when
+    the current buffer is empty. Existing files stay open. After connecting,
+    the welcome buffer is removed and the connected dashboard spells the
+    database name in its banner (wrapping long names), then shows table/view
+    counts, saved query files, temp query files persisted on disk, table names,
+    and connection details in panels. Unsaved temp buffers are not counted.
+    The dashboard remains available under its connection in the explorer:
+    press <CR> or o on Dashboard to return to it in the editor pane. It does
+    not open a separate Neovim tab. Views are shown as unavailable when the
+    explorer does not support them for that database.
+    SQL Server also loads a chart of the eight largest tables by estimated row
+    count in the background; estimates do not scan the actual table contents.
+    Press `r` on the dashboard to refresh its connection's catalog metrics.
+    Results open below after query execution.
 
 :EnhanceStop                                             *:EnhanceStop*
     Stop enhance workspace and close all windows.
@@ -198,6 +209,13 @@ dd                      Delete file under cursor
 D                       Delete file under cursor (same as dd)
 d (visual)              Delete selected files in visual mode
 D (visual)              Delete selected files in visual mode
+
+Welcome / Database Overview                             *enhance-keymaps-landing*
+
+e                       Focus the database explorer
+n                       Create a query (requires a connection)
+r                       Refresh database overview (connected dashboard only)
+?                       Open Enhance help
 
 Query Buffer Keymaps                                     *enhance-keymaps-query*
 

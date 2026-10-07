@@ -236,7 +236,7 @@ enhance.nvim uses a standard database URL connection string and a name property 
 
 | Command | Description |
 |---------|-------------|
-| `:EnhanceStart` | Start enhance workspace with explorer and query editor |
+| `:EnhanceStart` | Open the explorer and welcome page (preserves an existing file) |
 | `:EnhanceStop` | Stop enhance workspace and close all windows |
 | `:EnhanceExplorer` | Toggle database explorer drawer |
 | `:EnhanceResults` | Toggle results window |
@@ -247,14 +247,30 @@ enhance.nvim uses a standard database URL connection string and a name property 
 
 ### Workflow
 
-1. **Start**: Run `:EnhanceStart` to open workspace with explorer drawer
-2. **Connect**: Press `<CR>` on a connection in explorer to test and expand it
+1. **Start**: Press `<leader>de` or run `:EnhanceStart` to open the explorer and welcome page in an empty window
+2. **Connect**: Press `<CR>` on a connection in explorer to test and expand it; the welcome page is removed and a database overview appears
 3. **New Query**: Press `o` on "New Query" or run `:EnhanceQuery`
 4. **Write**: Write your SQL query in the editor
 5. **Execute**: Press `<F5>` to execute (normal mode: entire buffer, visual mode: selection)
 6. **View**: Results appear in bottom window with status line
 7. **Save**: Use `:w` to save query (prompts for filename)
 8. **Manage**: Use explorer to view buffers, saved queries, and tables
+
+The welcome page offers `e` to focus the explorer, `n` for a new query after connecting,
+and `?` for help. The connected dashboard spells the database name in its top
+banner (wrapping long names) and keeps these actions beneath it. It shows
+table/view counts, saved query files, persisted temp query files, table names,
+and connection details. Unsaved in-memory temp buffers are not included in the
+on-disk count. Views are shown as unavailable for databases without explorer
+view support. The welcome page is temporary; the dashboard stays hidden when
+you open a query and can be reopened from **Dashboard** under its connection
+in the explorer (`<CR>` or `o`). It returns in the editor pane, not a separate
+Neovim tab.
+
+For SQL Server, a rows-per-table chart loads the eight largest user tables in
+the background. Counts are **catalog estimates**, not exact `COUNT(*)` results;
+the chart reports unavailable metadata if the catalog query cannot run. Press
+`r` on the dashboard to refresh that connection's object counts and chart.
 
 ### SQL completion
 

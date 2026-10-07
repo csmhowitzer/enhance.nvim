@@ -72,6 +72,10 @@ end
 function M.set_current(conn)
   current_connection = conn
   vim.notify("Connected to: " .. conn.name, vim.log.levels.INFO)
+  local explorer = package.loaded["enhance.explorer"]
+  if explorer and explorer.show_dashboard then
+    explorer.show_dashboard(conn)
+  end
 end
 
 ---Get current active connection
@@ -186,4 +190,3 @@ M._disconnect = M.disconnect
 M._connect = M.connect
 
 return M
-

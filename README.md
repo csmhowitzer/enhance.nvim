@@ -164,6 +164,7 @@ require("enhance").setup({
 | `keymaps.save_query` | string | `:w` | Keymap to save query |
 | `ui.results_position` | string | `"split"` | Results window position |
 | `ui.show_query_time` | boolean | `true` | Show query execution time |
+| `ui.dashboard.card_border` | string | `"EnhanceDashboardBorder"` | Highlight group for database dashboard card borders (defaults to yellow `#f9e2af`) |
 | `status_line.enabled` | boolean | `true` | Enable status line in results |
 | `status_line.position` | string | `"top"` | Status line position: `"top"`, `"bottom"`, `"none"` |
 
@@ -308,7 +309,10 @@ banner (wrapping long names) and keeps these actions beneath it. It shows
 table/view counts, saved query files, persisted temp query files, table names,
 and connection details. Unsaved in-memory temp buffers are not included in the
 on-disk count. Views are shown as unavailable for databases without explorer
-view support. The welcome page is temporary; the dashboard stays hidden when
+view support. For SQL Server, a seventh overview card shows **Database Data Size**:
+space used across all database data files (excluding transaction logs), in kB,
+MB, or GB. It loads in the background and shows `Unavailable` if the lookup
+fails. The welcome page is temporary; the dashboard stays hidden when
 you open a query and can be reopened from **Dashboard** under its connection
 in the explorer (`<CR>` or `o`). It returns in the editor pane, not a separate
 Neovim tab.
@@ -316,7 +320,54 @@ Neovim tab.
 For SQL Server, a rows-per-table chart loads the eight largest user tables in
 the background. Counts are **catalog estimates**, not exact `COUNT(*)` results;
 the chart reports unavailable metadata if the catalog query cannot run. Press
-`r` on the dashboard to refresh that connection's object counts and chart.
+`r` on the dashboard to refresh that connection's object counts, data size, and chart.
+Chart rows have breathing room between bars. The **Pinned Tables** card sits
+beside Top 8 when the editor pane is wide enough, stacking below it when narrow.
+It holds up to eight tables per connection in alphabetical order. Pin a table in the
+explorer with `<leader>dp` on its row or choose **Pin to dashboard** under the
+expanded table; the action becomes **Unpin from dashboard** once pinned. A yellow
+pin appears beside pinned tables. Pins persist in
+`stdpath('data')/enhance.nvim/<connection name>/pins.json`. SQL Server shows
+catalog row estimates as bars scaled to the largest pinned table, with a blank
+line between pins; other engines show table names.
+When SQL Server tables are pinned, three more cards appear below the charts:
+**Columns**, **Indexes**, and **Data Size**. Each lists every pinned table in
+alphabetical order. Index counts include primary-key indexes but exclude the
+heap; data size uses allocated heap/clustered and LOB pages (excluding
+nonclustered index pages), displayed in kB, MB, or GB. Metadata loads in the
+background; missing tables show `N/A`. All three cards disappear when there
+are no pins. Scroll the dashboard normally to see cards below the window.
+
+### SQL Server table dashboards
+
+Expand any SQL Server table in the explorer and select **Dashboard** to see its
+own overview in the editor pane. Under **TABLE METADATA**, four cards show its
+estimated row count, non-heap index count, column count, and allocated table
+data size; their descriptions use the same muted italic styling as the dashboard
+subtitle. A full-width **CREATE TABLE** card displays a syntax-highlighted
+generated script from the catalog (columns, identity, defaults, and primary
+key); it is a convenient schema preview, not a complete migration script for
+every SQL Server table feature. Its centered,
+italic `yc copy` action copies the complete generated script to the system
+clipboard. The **REFERENCES** section lists views, stored procedures, and
+functions found in SQL Server's static dependency catalog, plus saved `.sql`
+queries whose text mentions the table.
+Dynamic SQL dependencies may not be recorded by the catalog. The references
+card uses the same type icons as the explorer, with one name per row and a
+centered selection hint. Move through the list with `j`/`k` and press `<CR>` to
+open a saved query or the
+object's definition in the editor. The selected reference highlights when the
+cursor reaches it. Press `r` to refresh the table's data. The table dashboard
+remains available after opening a reference; select its explorer Dashboard
+action to return. Table cards have green borders, blue labels, and purple
+section headings. Cards stack when the editor pane is narrow.
+
+To customize the database dashboard card border, set a highlight group in setup:
+
+```lua
+require('enhance').setup({ ui = { dashboard = { card_border = 'MyDashboardBorder' } } })
+vim.api.nvim_set_hl(0, 'MyDashboardBorder', { fg = '#f9e2af' })
+```
 
 ### SQL completion
 
@@ -343,6 +394,7 @@ sources = {
 - `o` - Open buffer, saved query, or create new query/script
 - `q` - Close explorer
 - `<leader>de` - Toggle explorer
+- `<leader>dp` - Pin/unpin the table under the explorer cursor (maximum eight per connection)
 - `R` - Refresh explorer (clear cache and redraw)
 - `dd` or `D` - Delete file under cursor
 - `d` or `D` (visual) - Delete selected files
@@ -359,6 +411,7 @@ sources = {
 - `yr` - Copy full row as tab-separated values (without display truncation)
 - `ys` - Copy the current result set as tab-separated text, including `#` row numbers and headers
 - `gk` - Show any data cell, truncated or not, in a scrollable popup; detected JSON opens the JSON viewer (`q` or `Esc` closes either)
+- `<leader>dh` - Toggle SQL Server datatype labels below result headers (works from any buffer)
 - `Alt-k` / `Alt-j` - Previous / next result set (wraps at either end)
 - `Alt-h` / `Alt-l` - Previous / next column within the current data row (wraps within the row)
 - `h` / `j` / `k` / `l` - Native cursor movement
@@ -383,6 +436,10 @@ from the status line. `gk` shows the full value even if its table display is
 truncated. Its title is the column header and, when known, SQL data type;
 its border matches the cell's result color when one is assigned. On a JSON
 cell, `gk` opens the syntax-highlighted JSON viewer instead.
+The non-JSON cell popup has padding around short values. `<leader>dh` adds a
+color-matched datatype row between each SQL Server table's column names and
+separator, including empty tables when type metadata is available. It starts
+hidden and toggles across open results without changing copied data.
 SQL Server's `sqlcmd` may limit values longer than 4,096 characters before
 Enhance receives them; copying preserves the full value returned by `sqlcmd`.
 

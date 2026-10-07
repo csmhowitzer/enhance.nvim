@@ -8,6 +8,7 @@ local M = {}
 ---@field connections_file string Path to connections JSON file (vim-dadbod-ui format)
 ---@field keymaps table Keymap configuration
 ---@field ui table UI configuration
+---@field ui.dashboard table? Dashboard appearance (card_border: highlight group)
 ---@field status_line table Status line configuration
 
 ---@type EnhanceConfig
@@ -23,6 +24,7 @@ local default_config = {
   ui = {
     results_position = "split", -- "split", "vsplit", "tab"
     show_query_time = true,
+    dashboard = { card_border = 'EnhanceDashboardBorder' },
   },
   status_line = {
     enabled = true,
@@ -155,6 +157,32 @@ function M.setup_highlights()
     default = true
   })
 
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardBorder', {
+    fg = '#f9e2af', -- Same yellow as connection icons
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardTableBorder', {
+    fg = '#a6e3a1', -- Green table card borders
+    default = true
+  })
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardCategory', {
+    fg = '#cba6f7', bold = true, default = true
+  })
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardLabel', {
+    fg = '#89b4fa', bold = true, default = true
+  })
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardHint', {
+    fg = '#89b4fa', italic = true, default = true
+  })
+  local subtitle = vim.api.nvim_get_hl(0, { name = 'Comment' })
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardMetaDescription', {
+    fg = subtitle.fg or '#6c7086', italic = true, default = true
+  })
+  vim.api.nvim_set_hl(0, 'EnhanceDashboardReferenceSelected', {
+    bg = '#313244', default = true
+  })
+
   vim.api.nvim_set_hl(0, 'EnhanceIconBlue', {
     fg = '#89b4fa',  -- Blue - Level 1: category folders (Tables, Views, Buffers, etc.)
     default = true
@@ -265,6 +293,10 @@ function M.setup(opts)
   vim.keymap.set('n', '<leader>dr', function()
     require("enhance.explorer").toggle_results()
   end, { desc = "Toggle [D]atabase [R]esults" })
+
+  vim.keymap.set('n', '<leader>dh', function()
+    require('enhance.results').toggle_datatypes()
+  end, { desc = 'Toggle [D]atabase type [H]eaders' })
 
   -- Create new query
   vim.keymap.set('n', '<leader>dq', function()

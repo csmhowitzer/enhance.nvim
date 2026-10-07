@@ -3,6 +3,7 @@
 
 local M = {}
 local json_utils = require('enhance.json_utils')
+local show_datatypes = false
 
 ---Format number with comma separators (e.g., 1000 -> 1,000)
 ---@param num number Number to format
@@ -233,6 +234,8 @@ local function build_result_sections(lines, result_rows, metadata, offset)
       local section = sections[section_idx]
       section.row_lines[row.row_idx] = line_num
       section.headers, section.rows = row.headers, row.rows
+      section.column_types = row.column_types
+      section.json_columns = row.json_columns
     end
   end
   for i, section in ipairs(sections) do
@@ -244,6 +247,9 @@ local function build_result_sections(lines, result_rows, metadata, offset)
     end
     if table_result and not section.headers then
       section.headers, section.rows = table_result.headers, table_result.rows
+    end
+    if table_result and not section.column_types then
+      section.column_types = table_result.column_types
     end
   end
   return sections
@@ -365,6 +371,7 @@ function M.display(lines, connection, query_bufnr, metadata)
   vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', result_rows)
 
   vim.api.nvim_buf_set_var(buf, 'enhance_result_sections', build_result_sections(lines, result_rows, metadata, offset))
+  M.render_datatypes(buf)
 
   -- Associate result buffer with query buffer
   if query_bufnr then
@@ -635,6 +642,54 @@ local function type_highlight(type_name)
   return nil
 end
 
+---Show declared types between each table header and its separator. Virtual
+---lines leave actual result lines, row positions and clipboard data intact.
+---@param bufnr number Results buffer
+function M.render_datatypes(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local ns = vim.api.nvim_create_namespace('enhance_datatype_headers')
+  vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+  if not show_datatypes then return end
+  local ok, sections = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_sections')
+  if not ok then return end
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  for i, section in ipairs(sections) do
+    if section.column_types and #section.column_types > 0 then
+      local last = sections[i + 1] and sections[i + 1].header_line - 1 or #lines
+      for sep = section.header_line + 1, last do
+        if lines[sep]:match('^| %-+') then
+          local widths = {}
+          for dashes in lines[sep]:gmatch('%-+') do widths[#widths + 1] = #dashes end
+          if #widths == #section.headers then
+            local chunks = { { '| ', 'Normal' } }
+            for col, width in ipairs(widths) do
+              local type_name = section.column_types[col] or ''
+              local label = #type_name > width and type_name:sub(1, width - 3) .. '...' or type_name
+              local group = section.json_columns and section.json_columns[col] and 'EnhanceJsonCell'
+                or type_highlight(type_name) or 'Normal'
+              chunks[#chunks + 1] = { label .. string.rep(' ', width - #label), group }
+              chunks[#chunks + 1] = { ' | ', 'Normal' }
+            end
+            vim.api.nvim_buf_set_extmark(bufnr, ns, sep - 2, 0, { virt_lines = { chunks } })
+          end
+          break
+        end
+      end
+    end
+  end
+end
+
+---Toggle datatype labels across current and future result buffers.
+function M.toggle_datatypes()
+  show_datatypes = not show_datatypes
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].filetype == 'enhance-results' then
+      M.render_datatypes(buf)
+    end
+  end
+  vim.notify('Result datatypes ' .. (show_datatypes and 'shown' or 'hidden'), vim.log.levels.INFO)
+end
+
 ---Color SQL Server result values by their declared result-column type.
 ---NULL and JSON cells keep their existing, separate highlight groups.
 ---@param bufnr number Buffer number
@@ -701,33 +756,37 @@ function M.show_cell()
     and string.format(' %s (%s) ', header, type_name)
     or string.format(' %s ', header)
   local lines = vim.split(text, '\n', { plain = true })
-  local max_width = math.max(1, math.min(80, vim.o.columns - 4))
-  local width = math.min(max_width, math.max(1, vim.fn.strdisplaywidth(title)))
+  local max_width = math.max(5, math.min(80, vim.o.columns - 4))
+  local width = math.min(max_width, math.max(5, vim.fn.strdisplaywidth(title) + 2))
   for _, line in ipairs(lines) do
-    width = math.min(max_width, math.max(width, vim.fn.strdisplaywidth(line)))
+    width = math.min(max_width, math.max(width, vim.fn.strdisplaywidth(line) + 4))
   end
   local display_lines = 0
   for _, line in ipairs(lines) do
-    display_lines = display_lines + math.max(1, math.ceil(vim.fn.strdisplaywidth(line) / width))
+    display_lines = display_lines + math.max(1, math.ceil(vim.fn.strdisplaywidth(line) / (width - 4)))
   end
 
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  local padded = { '' }
+  for _, line in ipairs(lines) do padded[#padded + 1] = '  ' .. line .. '  ' end
+  padded[#padded + 1] = ''
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, padded)
   vim.bo[buf].modifiable = false
   if group then
     local ns = vim.api.nvim_create_namespace('enhance_cell_hover')
     for i, line in ipairs(lines) do
-      vim.api.nvim_buf_add_highlight(buf, ns, group, i - 1, 0, #line)
+      vim.api.nvim_buf_add_highlight(buf, ns, group, i, 2, #line + 2)
     end
   end
 
   local win = vim.api.nvim_open_win(buf, true, {
     relative = 'cursor', row = 1, col = 0,
-    width = width, height = math.min(display_lines, math.max(1, vim.o.lines - 4)),
+    width = width, height = math.min(display_lines + 2, math.max(1, vim.o.lines - 4)),
     style = 'minimal', border = 'rounded', title = title, title_pos = 'center',
   })
   vim.wo[win].wrap = true
+  vim.wo[win].breakindent = true
   local winhighlight = 'NormalFloat:Normal'
   if group then
     winhighlight = winhighlight .. ',FloatBorder:' .. group .. ',FloatTitle:' .. group

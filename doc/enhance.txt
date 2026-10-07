@@ -112,6 +112,14 @@ Configuration options:
     List of database connections. Each connection is a table with
     database-specific fields. See |enhance-database-types| for details.
 
+{ui.dashboard.card_border}                     *enhance-config-dashboard-border*
+    Type: `string` (highlight group)
+    Default: `EnhanceDashboardBorder` (yellow, #f9e2af)
+
+    Highlight group for database dashboard card borders. Define your own
+    highlight and set this option to its group name to customize the color.
+    Table dashboards use EnhanceDashboardTableBorder (green) instead.
+
 ==============================================================================
 4. COMMANDS                                              *enhance-commands*
 
@@ -126,9 +134,44 @@ Configuration options:
     press <CR> or o on Dashboard to return to it in the editor pane. It does
     not open a separate Neovim tab. Views are shown as unavailable when the
     explorer does not support them for that database.
+    For SQL Server, a seventh overview card shows Database Data Size: space
+    used in its data files, excluding transaction logs, in kB/MB/GB. It loads
+    in the background and shows Unavailable when the lookup fails.
     SQL Server also loads a chart of the eight largest tables by estimated row
     count in the background; estimates do not scan the actual table contents.
-    Press `r` on the dashboard to refresh its connection's catalog metrics.
+    Chart bars have a blank row between them. The pinned card sits beside
+    Top 8 when space allows, or below it in a narrow editor pane. Pin up to
+    eight tables per connection with <leader>dp on their explorer rows, or use the Pin/Unpin
+    action under an expanded table. A pin icon marks pinned tables. The
+    Pinned Tables panel shows them alphabetically, with SQL Server catalog row
+    estimates as bars scaled to the largest pin, with blank rows between them.
+    Pins persist in
+    stdpath('data')/enhance.nvim/<connection name>/pins.json.
+    When SQL Server tables are pinned, separate Columns, Indexes, and Data
+    Size cards list every pinned table alphabetically. Data Size reports
+    allocated heap/clustered and LOB pages, excluding nonclustered indexes,
+    in kB/MB/GB. Index counts include primary-key indexes, excluding heaps.
+    Missing catalog entries show N/A; no pins means no metadata cards.
+    Use normal buffer movement to scroll to cards below the window.
+    Under any SQL Server table in the explorer, choose Dashboard to open its
+    table overview. TABLE METADATA has four cards showing estimated rows,
+    indexes, columns, and allocated data size. Descriptions use the subtitle's
+    muted italic styling. The full-width CREATE TABLE card previews a
+    syntax-highlighted catalog script with columns, identity, defaults, and
+    primary key; it is not a complete migration script.
+    The centered italic yc copy hint copies the full script to the system
+    clipboard. REFERENCES is a section heading above views, procedures, and
+    functions from static SQL Server dependencies and saved .sql queries
+    mentioning the table.
+    Dynamic SQL dependencies may be absent. References use explorer type icons
+    and names rather than type labels. The card centers an italic selection
+    hint. Use j/k to move through the list and <CR> to open a definition or
+    saved query. The item under the cursor is highlighted. Press r to refresh
+    the table dashboard. Green-bordered cards have blue labels and purple
+    section headings. The table dashboard
+    remains available via its explorer Dashboard action after opening a
+    reference.
+    Press `r` on the dashboard to refresh its connection's catalog metrics and size.
     Results open below after query execution.
 
 :EnhanceStop                                             *:EnhanceStop*
@@ -166,6 +209,7 @@ enhance.setup({opts})                                    *enhance.setup()*
       {opts} (table?) Configuration options
         • enabled (boolean): Enable/disable plugin
         • connections (table[]): Database connections
+        • ui.dashboard.card_border (string): Dashboard card border highlight
     
     Example:
 >lua
@@ -205,6 +249,7 @@ Explorer Keymaps                                         *enhance-keymaps-explor
 <CR>                    Expand/collapse connection or open item
 q                       Close explorer drawer
 <leader>de              Toggle explorer drawer
+<leader>dp              Pin/unpin table under cursor (up to eight per connection)
 dd                      Delete file under cursor
 D                       Delete file under cursor (same as dd)
 d (visual)              Delete selected files in visual mode
@@ -244,6 +289,8 @@ gk                      Show any cell (truncated or not) in a scrollable popup
                         q or Esc closes it
                         JSON is pretty-printed with JSON syntax highlighting;
                         non-JSON cells retain their result colors
+<leader>dh             Toggle SQL Server datatype labels under result headers
+                        Works from any buffer; labels start hidden
 <M-k> / <M-j>           Previous / next result set (Alt-k / Alt-j)
 <M-h> / <M-l>           Previous / next column (Alt-h / Alt-l)
 h / j / k / l           Native cursor movement
@@ -329,6 +376,9 @@ remain plain. NULL and detected JSON retain their own highlights. Enhance
 requests type metadata with an additional `sqlcmd` query per result set; if
 the query cannot be described (for example, it references a local temporary
 table), values simply remain uncolored by type.
+Press <leader>dh to show or hide datatype labels beneath each result header.
+Labels follow their column's color and are available for empty tables when
+SQL Server returns type metadata. The cell popup pads short values on all sides.
 
 SQLite                                                   *enhance-sqlite*
 

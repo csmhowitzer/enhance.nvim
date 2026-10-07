@@ -32,8 +32,9 @@ end
 ---@param headers string[] Column headers
 ---@param rows string[][] Data rows
 ---@param config FormatterConfig Configuration
+---@param column_types string[]? Known result-column types
 ---@return number[] Column widths
-local function calculate_column_widths(headers, rows, config)
+local function calculate_column_widths(headers, rows, config, column_types)
   local widths = {}
   
   -- Initialize with header widths
@@ -51,6 +52,11 @@ local function calculate_column_widths(headers, rows, config)
         end
       end
     end
+  end
+
+  -- A toggleable type row must fit without shifting any result columns.
+  for i, type_name in ipairs(column_types or {}) do
+    if widths[i] then widths[i] = math.max(widths[i], #type_name) end
   end
   
   -- Apply min/max constraints
@@ -165,7 +171,7 @@ function M.format(parsed_result, user_config)
   end
 
   -- Calculate column widths
-  local widths = calculate_column_widths(headers, rows, config)
+  local widths = calculate_column_widths(headers, rows, config, parsed_result.column_types)
   local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
 
   local lines = {}
@@ -213,7 +219,7 @@ function M.format_multiple_result_sets(result_sets, user_config)
     local rows = result_set.rows or {}
 
     if #headers > 0 then
-      local widths = calculate_column_widths(headers, rows, config)
+      local widths = calculate_column_widths(headers, rows, config, result_set.column_types)
       local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
 
       -- Format header

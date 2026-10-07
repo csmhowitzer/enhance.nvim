@@ -143,10 +143,12 @@ describe("enhance.results", function()
       assert.not_equals('', vim.api.nvim_win_get_config(popup).relative)
       assert.equals(' Amount (decimal(12,3)) ', popup_title(popup))
       assert.is_truthy(vim.wo[popup].winhighlight:find('FloatBorder:EnhanceNumberCell', 1, true))
-      assert.equals(full, table.concat(vim.api.nvim_buf_get_lines(popup_buf, 0, -1, false), '\n'))
+      assert.are.same({ '', '  ' .. full .. '  ', '' },
+        vim.api.nvim_buf_get_lines(popup_buf, 0, -1, false))
       local ns = vim.api.nvim_create_namespace('enhance_cell_hover')
       local marks = vim.api.nvim_buf_get_extmarks(popup_buf, ns, 0, -1, { details = true })
       assert.equals('EnhanceNumberCell', marks[1][4].hl_group)
+      assert.are.same({ 1, 2 }, { marks[1][2], marks[1][3] })
       local maps = vim.api.nvim_buf_get_keymap(popup_buf, 'n')
       local close = {}
       for _, map in ipairs(maps) do close[map.lhs] = true end
@@ -175,8 +177,21 @@ describe("enhance.results", function()
       assert.not_equals(buf, vim.api.nvim_get_current_buf())
       assert.equals(' Name ', popup_title(popup))
       assert.equals('NormalFloat:Normal', vim.wo[popup].winhighlight)
-      assert.equals('Ada', vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+      assert.are.same({ '', '  Ada  ', '' }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
       vim.api.nvim_win_close(popup, true)
+    end)
+
+    it('pads a one-character cell on all four sides', function()
+      local lines, row_map = require('enhance.formatter').format({
+        headers = { 'Flag' }, rows = { { '1' } }, column_types = { 'int' },
+      })
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', row_map)
+      vim.api.nvim_win_set_cursor(0, { 3, 2 })
+      results.show_cell()
+      assert.are.same({ '', '  1  ', '' }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
+      assert.is_true(vim.api.nvim_win_get_width(0) >= 5)
+      vim.api.nvim_win_close(0, true)
     end)
 
     it("opens detected JSON in the JSON viewer with its column name and SQL type", function()
@@ -356,6 +371,44 @@ describe("enhance.results", function()
       vim.api.nvim_win_set_cursor(0, { 1, 0 })
       results.navigate('column', 1)
       assert.are.same({ sections[1].row_lines[1], 2 }, vim.api.nvim_win_get_cursor(0))
+    end)
+
+    it('toggles aligned, color-matched datatype rows without changing result lines or copies', function()
+      local formatter = require('enhance.formatter')
+      local statements = {
+        { result_table = {
+          headers = { 'ID', 'Name', 'Started' }, rows = { { '1', 'Ada', '2026-01-17' } },
+          column_types = { 'int', 'nvarchar(255)', 'date' },
+        }, rows = 1 },
+        { result_table = {
+          headers = { 'Empty' }, rows = {}, column_types = { 'decimal(10,2)' },
+        }, rows = 0 },
+      }
+      local lines, _, row_map = formatter.format_multiple_statements(statements)
+      local sections = results._build_result_sections(lines, row_map, { statement_results = statements }, 0)
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', row_map)
+      vim.api.nvim_buf_set_var(buf, 'enhance_result_sections', sections)
+      local ns = vim.api.nvim_create_namespace('enhance_datatype_headers')
+
+      results.toggle_datatypes()
+      local marks = vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })
+      assert.equals(2, #marks)
+      local chunks = marks[1][4].virt_lines[1]
+      assert.equals('int', vim.trim(chunks[2][1]))
+      assert.equals('EnhanceNumberCell', chunks[2][2])
+      assert.equals('nvarchar(255)', vim.trim(chunks[4][1]))
+      assert.equals('Normal', chunks[4][2])
+      assert.equals('date', vim.trim(chunks[6][1]))
+      assert.equals('EnhanceDateCell', chunks[6][2])
+      assert.equals('decimal(10,2)', vim.trim(marks[2][4].virt_lines[1][2][1]))
+      assert.are.same(lines, vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+      vim.api.nvim_win_set_cursor(0, { sections[1].row_lines[1], 2 })
+      results.copy_result_set()
+      assert.equals('#\tID\tName\tStarted\n1\t1\tAda\t2026-01-17', vim.fn.getreg('"'))
+
+      results.toggle_datatypes()
+      assert.equals(0, #vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {}))
     end)
 
     it("highlights the JSON cell at its rendered width after truncation", function()

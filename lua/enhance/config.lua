@@ -46,6 +46,7 @@ function M.defaults()
     ui = {
       results_position = "split",
       show_query_time = true,
+      dashboard = { card_border = 'EnhanceDashboardBorder' },
     },
     status_line = {
       enabled = true,
@@ -375,4 +376,3 @@ M._parse_postgres_url = parse_postgres_url
 M._parse_connection_url = parse_connection_url
 
 return M
-

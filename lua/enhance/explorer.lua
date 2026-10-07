@@ -51,8 +51,15 @@ local connection_buffers = {}
 
 ---@type table<string, integer> Hidden dashboard buffers, keyed by connection name
 local dashboard_buffers = {}
+local table_dashboard_buffers = {}
+local table_dashboard_versions = {}
 local dashboard_rows = {}
+local dashboard_database_size = {}
+local dashboard_pinned_rows = {}
+local dashboard_pinned_details = {}
 local dashboard_needs_update = {}
+local dashboard_revision = {}
+local table_dashboard_revision = 0
 
 ---@type integer? Last results buffer number
 local last_results_buf = nil
@@ -1013,17 +1020,27 @@ local function build_explorer_content()
 			-- Show table list if expanded
 			if tables_expanded then
 				local table_icon = get_node_icon("table")
+				local pins = require('enhance.dashboard_pins').list(conn)
+				local pinned = {}
+				for _, name in ipairs(pins) do pinned[name] = true end
 				for _, table_name in ipairs(tables) do
 					-- Table name with expand/collapse icon
 					local table_key = conn_key .. ":table:" .. table_name
 					local table_expanded = expanded[table_key]
 					local table_arrow = get_arrow_icon(table_expanded)
 
-					table.insert(lines, string.format("      %s %s  %s", table_arrow, table_icon, table_name))
+					table.insert(lines, string.format("      %s %s  %s%s", table_arrow, table_icon, table_name,
+						pinned[table_name] and ' 󰐃' or ''))
 
 					-- Show table sub-items if expanded
 					if table_expanded then
 						local subitem_icon = get_node_icon("table_subitem")
+						if conn.type:lower():gsub('[%s%-_]', '') == 'sqlserver'
+							or conn.type:lower():gsub('[%s%-_]', '') == 'mssql' then
+							table.insert(lines, string.format('          %s  Dashboard', subitem_icon))
+						end
+						table.insert(lines, string.format("          %s  %s", pinned[table_name] and '󰐃' or '󰐄',
+							pinned[table_name] and 'Unpin from dashboard' or 'Pin to dashboard'))
 						table.insert(lines, string.format("          %s  Columns", subitem_icon))
 						table.insert(lines, string.format("          %s  List (200 rows)", subitem_icon))
 						table.insert(lines, string.format("          %s  Primary Keys", subitem_icon))
@@ -1176,6 +1193,11 @@ local function apply_status_highlights()
 	local lines = vim.api.nvim_buf_get_lines(explorer_buf, 0, -1, false)
 
 	for line_num, line in ipairs(lines) do
+		local pin_icon = line:find('󰐃', 1, true)
+		if pin_icon then
+			vim.api.nvim_buf_add_highlight(explorer_buf, ns_id, 'EnhanceIconYellow', line_num - 1,
+				pin_icon - 1, pin_icon + #'󰐃' - 1)
+		end
 		-- Check for connection status icons at start of line
 		if line:match("^✓") then
 			-- Green checkmark for connected
@@ -1912,6 +1934,7 @@ function parse_line(line, line_num)
 		metadata = name_parts[#name_parts]
 		table.remove(name_parts, #name_parts)
 	end
+	if name_parts[#name_parts] == '󰐃' then table.remove(name_parts) end
 
 	-- Join name parts with spaces and trim
 	name = table.concat(name_parts, " ")
@@ -1938,7 +1961,7 @@ function parse_line(line, line_num)
 			if parent_conn then
 				return { type = "new_query", conn_name = parent_conn }
 			end
-		elseif name == "Dashboard" then
+		elseif name == "Dashboard" and indent_level == 4 then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "dashboard", conn_name = parent_conn }
@@ -1998,7 +2021,11 @@ function parse_line(line, line_num)
 					return { type = "saved_query_item", conn_name = parent_info.conn_name, query_name = name }
 				elseif parent_info.type == "table" then
 					-- Table sub-items
-					if name:match("Columns") then
+					if name == 'Dashboard' then
+						return { type = 'table_dashboard', conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					elseif name == 'Pin to dashboard' or name == 'Unpin from dashboard' then
+						return { type = 'table_pin', conn_name = parent_info.conn_name, table_name = parent_info.table_name }
+					elseif name:match("Columns") then
 						return { type = "table_columns", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
 					elseif name:match("List") then
 						return { type = "table_list", conn_name = parent_info.conn_name, table_name = parent_info.table_name }
@@ -3101,7 +3128,12 @@ local function handle_open(line_num)
 
 	local connections = require("enhance.connections")
 
-	if info.type == "new_query" then
+	if info.type == 'table_pin' then
+		M.toggle_pin(info)
+	elseif info.type == 'table_dashboard' then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then M.open_table_dashboard(conn, info.table_name) end
+	elseif info.type == "new_query" then
 		-- Create new empty query buffer
 		M.new_query()
 	elseif info.type == "dashboard" then
@@ -3414,6 +3446,11 @@ local function handle_enter(line_num)
 	elseif info.type == "dashboard" then
 		local conn = connections.get_connection(info.conn_name)
 		if conn then M.open_dashboard(conn) end
+	elseif info.type == 'table_pin' then
+		M.toggle_pin(info)
+	elseif info.type == 'table_dashboard' then
+		local conn = connections.get_connection(info.conn_name)
+		if conn then M.open_table_dashboard(conn, info.table_name) end
 	elseif info.type == "buffers" then
 		-- Toggle buffers folder expansion
 		local conn = connections.get_connection(info.conn_name)
@@ -3577,15 +3614,6 @@ function M.start()
 			if vim.api.nvim_buf_is_valid(bufnr) then
 				local filepath = vim.api.nvim_buf_get_name(bufnr)
 				if filepath and is_tmp_file(filepath) then
-					vim.notify(
-						string.format(
-							"DEBUG: Found tmp buffer %d: %s (modified=%s)",
-							bufnr,
-							filepath,
-							tostring(vim.bo[bufnr].modified)
-						),
-						vim.log.levels.INFO
-					)
 					auto_save_tmp_buffer(bufnr)
 					saved_count = saved_count + 1
 				end
@@ -3593,8 +3621,6 @@ function M.start()
 		end
 		if saved_count > 0 then
 			vim.notify(string.format("Auto-saved %d tmp buffer(s)", saved_count), vim.log.levels.INFO)
-		else
-			vim.notify("No tmp buffers found to save", vim.log.levels.INFO)
 		end
 		return saved_count
 	end
@@ -3677,6 +3703,16 @@ function M.start()
 		vim.keymap.set("n", "o", function()
 			handle_open(vim.fn.line("."))
 		end, { buffer = explorer_buf, desc = "Open buffer/query" })
+
+		vim.keymap.set('n', '<leader>dp', function()
+			local line = vim.api.nvim_get_current_line()
+			local info = parse_line(line, vim.fn.line('.'))
+			if info and (info.type == 'table' or info.type == 'table_pin') then
+				M.toggle_pin(info)
+			else
+				vim.notify('Place the cursor on a table to pin it', vim.log.levels.WARN)
+			end
+		end, { buffer = explorer_buf, desc = 'Pin/unpin table on dashboard' })
 
 		vim.keymap.set("n", "<leader>de", function()
 			M.toggle()
@@ -3816,25 +3852,176 @@ function M.show_dashboard(connection, force, row_counts, skip_fetch)
 		temp_buffers = temp_buffers,
 	}
 	local win = query_editor_win
+	local pins = require('enhance.dashboard_pins').list(connection)
+	local revision = (dashboard_revision[connection.name] or 0) + 1
+	dashboard_revision[connection.name] = revision
 	local previous_dashboard = dashboard_buffers[connection.name]
-	local shown_buf = landing.show_dashboard(win, connection, tables, view_count, row_counts, local_counts)
+	local shown_buf = landing.show_dashboard(win, connection, tables, view_count, row_counts, local_counts,
+		pins, dashboard_pinned_rows[connection.name], dashboard_pinned_details[connection.name],
+		dashboard_database_size[connection.name])
 	dashboard_buffers[connection.name] = shown_buf
 	dashboard_needs_update[connection.name] = nil
 	if previous_dashboard and previous_dashboard ~= shown_buf and vim.api.nvim_buf_is_valid(previous_dashboard) then
 		vim.api.nvim_buf_delete(previous_dashboard, { force = true })
 	end
+	local function update_dashboard()
+		if dashboard_revision[connection.name] ~= revision then return end
+		local current_buf = dashboard_buffers[connection.name]
+		if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == current_buf then
+			dashboard_buffers[connection.name] = landing.show_dashboard(win, connection, tables, view_count,
+				dashboard_rows[connection.name], local_counts, pins, dashboard_pinned_rows[connection.name],
+				dashboard_pinned_details[connection.name], dashboard_database_size[connection.name])
+		else
+			dashboard_needs_update[connection.name] = true
+		end
+	end
 	if (db_type == "sqlserver" or db_type == "mssql") and not skip_fetch then
 		require("enhance.dashboard_data").fetch_sqlserver_rows(connection, function(rows)
-			if dashboard_buffers[connection.name] ~= shown_buf then return end
+			if dashboard_revision[connection.name] ~= revision then return end
 			dashboard_rows[connection.name] = rows or false
-			if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == shown_buf then
-				dashboard_buffers[connection.name] = landing.show_dashboard(
-					win, connection, tables, view_count, rows or false, local_counts)
-			else
-				dashboard_needs_update[connection.name] = true
-			end
+			update_dashboard()
 		end)
 	end
+	if (db_type == 'sqlserver' or db_type == 'mssql') and dashboard_database_size[connection.name] == nil then
+		require('enhance.dashboard_data').fetch_database_size(connection, function(size)
+			if dashboard_revision[connection.name] ~= revision then return end
+			dashboard_database_size[connection.name] = size or false
+			update_dashboard()
+		end)
+	end
+	if (db_type == 'sqlserver' or db_type == 'mssql') and #pins > 0 and dashboard_pinned_rows[connection.name] == nil then
+		require('enhance.dashboard_data').fetch_pinned_rows(connection, pins, function(rows)
+			if dashboard_revision[connection.name] ~= revision then return end
+			dashboard_pinned_rows[connection.name] = rows or false
+			update_dashboard()
+		end)
+	end
+	if (db_type == 'sqlserver' or db_type == 'mssql') and #pins > 0
+		and dashboard_pinned_details[connection.name] == nil then
+		require('enhance.dashboard_data').fetch_pinned_details(connection, pins, function(details)
+			if dashboard_revision[connection.name] ~= revision then return end
+			dashboard_pinned_details[connection.name] = details or false
+			update_dashboard()
+		end)
+	end
+end
+
+---Open the selected SQL Server table's metrics, schema, and dependency dashboard.
+---@param connection table
+---@param name string
+---@param force boolean? Re-fetch metadata when refreshing the visible table dashboard
+function M.open_table_dashboard(connection, name, force)
+	local current = require('enhance.connections').get_current()
+	if not current or current.name ~= connection.name then
+		vim.notify('Connect to ' .. connection.name .. ' before opening its table dashboard', vim.log.levels.WARN)
+		return
+	end
+	if not query_editor_win or not vim.api.nvim_win_is_valid(query_editor_win) then return end
+	local key = connection.name .. '\0' .. name
+	local cached = table_dashboard_buffers[key]
+	if not force and cached and vim.api.nvim_buf_is_valid(cached)
+		and table_dashboard_versions[key] == table_dashboard_revision then
+		vim.api.nvim_set_current_win(query_editor_win)
+		if vim.api.nvim_win_get_buf(query_editor_win) ~= cached then
+			require('enhance.landing').open_existing(query_editor_win, cached)
+		end
+		return
+	end
+	if cached and vim.api.nvim_buf_is_valid(cached)
+		and vim.api.nvim_win_get_buf(query_editor_win) ~= cached then
+		vim.api.nvim_buf_delete(cached, { force = true })
+	end
+	local data = require('enhance.table_dashboard_data')
+	local win = query_editor_win
+	table_dashboard_revision = table_dashboard_revision + 1
+	local revision = table_dashboard_revision
+	local paths = {}
+	for _, query in ipairs(get_saved_queries_for_connection(connection.name)) do
+		paths[#paths + 1] = query.filepath
+	end
+	local state = { saved = data.saved_references(paths, name) }
+	local displayed
+	local function open_reference(ref)
+		if ref.path then
+			vim.api.nvim_set_current_win(win)
+			vim.cmd('edit ' .. vim.fn.fnameescape(ref.path))
+			local buf = vim.api.nvim_get_current_buf()
+			vim.b[buf].enhance_connection = connection
+			require('enhance.query').setup_keymaps(buf)
+		else
+			data.fetch_definition(connection, ref.name, function(definition)
+				if revision ~= table_dashboard_revision or not vim.api.nvim_win_is_valid(win)
+					or vim.api.nvim_win_get_buf(win) ~= displayed then return end
+				if definition and vim.api.nvim_win_is_valid(win) then
+					create_script_buffer(connection, definition, ref.name:gsub('[^%w%-]', '-') .. '-definition')
+				else
+					vim.notify('Definition unavailable for ' .. ref.name, vim.log.levels.WARN)
+				end
+			end)
+		end
+	end
+	local function redraw()
+		if revision ~= table_dashboard_revision then return end
+		if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= displayed then
+			table_dashboard_versions[key] = nil
+			return
+		end
+		displayed = require('enhance.landing').show_table_dashboard(win, connection, name, state,
+			open_reference, function() M.open_table_dashboard(connection, name, true) end)
+		table_dashboard_buffers[key] = displayed
+		table_dashboard_versions[key] = revision
+	end
+	vim.api.nvim_set_current_win(win)
+	displayed = require('enhance.landing').show_table_dashboard(win, connection, name, state,
+		open_reference, function() M.open_table_dashboard(connection, name, true) end)
+	table_dashboard_buffers[key] = displayed
+	table_dashboard_versions[key] = revision
+	local function selected(rows)
+		if not rows or #rows == 0 then return false end
+		for _, row in ipairs(rows) do
+			if row.name == name or row.name == 'dbo.' .. name then return row end
+		end
+		return rows[1]
+	end
+	require('enhance.dashboard_data').fetch_pinned_rows(connection, { name }, function(rows)
+		state.rows = selected(rows)
+		redraw()
+	end)
+	require('enhance.dashboard_data').fetch_pinned_details(connection, { name }, function(rows)
+		state.metrics = selected(rows)
+		redraw()
+	end)
+	data.fetch_create_script(connection, name, function(script)
+		state.script = script or false
+		redraw()
+	end)
+	data.fetch_references(connection, name, function(refs)
+		state.references = refs or false
+		redraw()
+	end)
+end
+
+---Pin or unpin a table selected in the explorer.
+---@param info table Parsed table node
+function M.toggle_pin(info)
+	local conn = require('enhance.connections').get_connection(info.conn_name)
+	if not conn then return end
+	local pinned, err = require('enhance.dashboard_pins').toggle(conn, info.table_name)
+	if pinned == nil then vim.notify(err, vim.log.levels.WARN); return end
+	-- An in-flight lookup for the old pin list must not repopulate the cache,
+	-- even when the dashboard is hidden and won't rerender until reopened.
+	dashboard_revision[conn.name] = (dashboard_revision[conn.name] or 0) + 1
+	dashboard_pinned_rows[conn.name] = nil
+	dashboard_pinned_details[conn.name] = nil
+	refresh_explorer()
+	if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win)
+		and dashboard_buffers[conn.name] == vim.api.nvim_win_get_buf(query_editor_win) then
+		local rows = dashboard_rows[conn.name]
+		M.show_dashboard(conn, true, rows, rows ~= nil)
+	else
+		dashboard_needs_update[conn.name] = true
+	end
+	vim.notify((pinned and 'Pinned ' or 'Unpinned ') .. info.table_name, vim.log.levels.INFO)
 end
 
 ---Return to the active connection's dashboard from the explorer.
@@ -3868,6 +4055,9 @@ function M.refresh_dashboard(connection)
 	table_cache["tables:" .. connection.name] = nil
 	object_cache["views:" .. connection.name] = nil
 	dashboard_rows[connection.name] = nil
+	dashboard_database_size[connection.name] = nil
+	dashboard_pinned_rows[connection.name] = nil
+	dashboard_pinned_details[connection.name] = nil
 	M.show_dashboard(connection)
 	refresh_explorer()
 end
@@ -3942,6 +4132,11 @@ function M.stop()
 			vim.api.nvim_buf_delete(buf, { force = true })
 		end
 	end
+	for _, buf in pairs(table_dashboard_buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			vim.api.nvim_buf_delete(buf, { force = true })
+		end
+	end
 
 	-- Reset state
 	workspace_initialized = false
@@ -3954,8 +4149,15 @@ function M.stop()
 	table_cache = {}
 	connection_buffers = {}
 	dashboard_buffers = {}
+	table_dashboard_buffers = {}
+	table_dashboard_versions = {}
+	table_dashboard_revision = 0
 	dashboard_rows = {}
+	dashboard_database_size = {}
+	dashboard_pinned_rows = {}
+	dashboard_pinned_details = {}
 	dashboard_needs_update = {}
+	dashboard_revision = {}
 
 	vim.notify("Enhance workspace stopped", vim.log.levels.INFO)
 end

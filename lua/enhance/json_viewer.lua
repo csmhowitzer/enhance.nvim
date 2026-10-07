@@ -14,6 +14,7 @@ local state = {
   total_rows = nil,    -- Total number of rows
   json_columns = nil,  -- Map of column indices that contain JSON
   headers = nil,       -- Column headers for title display
+  column_types = nil,  -- SQL result-column types (when available)
 }
 
 ---Check if we're in a results buffer and get cell data
@@ -33,6 +34,23 @@ local function get_current_cell_info()
   -- Get cursor position
   local cursor = vim.api.nvim_win_get_cursor(0)
   local line_num = cursor[1]  -- 1-based line number
+
+  -- Formatted result rows carry their source values and rendered widths. Use
+  -- them instead of counting pipes, which may also occur inside JSON values.
+  local has_rows, result_rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  if has_rows then
+    local row = result_rows[line_num] or result_rows[tostring(line_num)]
+    if row then
+      local start_col = 2 -- "| " before the first cell
+      for col_idx, width in ipairs(row.widths) do
+        if cursor[2] >= start_col and cursor[2] < start_col + width then
+          return true, row.values[col_idx], row.row_idx, col_idx, 1
+        end
+        start_col = start_col + width + 3
+      end
+    end
+    return true, nil, nil, nil, nil
+  end
 
   -- Get all lines to find result set boundaries
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -177,6 +195,20 @@ local function load_json_content(json_str, row_idx, total_rows)
   return true
 end
 
+---Build the title from the currently selected JSON column and row.
+---@param row_idx integer
+---@param total_rows integer
+---@return string
+local function window_title(row_idx, total_rows)
+  local col_name = state.headers and state.col_idx and state.headers[state.col_idx] or ''
+  local type_name = state.column_types and state.col_idx and state.column_types[state.col_idx]
+  if col_name == '' and state.col_idx then col_name = 'Column ' .. state.col_idx end
+  if type_name and type_name ~= '' then col_name = col_name .. ' (' .. type_name .. ')' end
+  return col_name ~= ''
+    and string.format(' JSON View - %s (Row %d/%d) ', col_name, row_idx, total_rows)
+    or string.format(' JSON View - Row %d/%d ', row_idx, total_rows)
+end
+
 ---Show floating window with JSON content
 local function show_floating_window()
   local bufnr = get_or_create_buffer()
@@ -200,17 +232,14 @@ local function show_floating_window()
   -- Get row info for title
   local row_idx = vim.api.nvim_buf_get_var(bufnr, 'enhance_json_row_idx')
   local total_rows = vim.api.nvim_buf_get_var(bufnr, 'enhance_json_total_rows')
-  local col_name = state.headers and state.col_idx and state.headers[state.col_idx] or ""
-  local title = col_name ~= ""
-    and string.format(" JSON View - %s (Row %d/%d) ", col_name, row_idx, total_rows)
-    or string.format(" JSON View - Row %d/%d ", row_idx, total_rows)
+  local title = window_title(row_idx, total_rows)
 
   -- Build footer with navigation hints
-  local footer_parts = { " q: close", "<C-n>: next", "<C-p>: prev" }
+  local footer_parts = { " q: close", "Alt-j/k: rows" }
 
   -- Add column navigation if multiple JSON columns exist
   if state.json_columns and vim.tbl_count(state.json_columns) > 1 then
-    table.insert(footer_parts, "<C-h>/<C-l>: columns")
+    table.insert(footer_parts, "Alt-h/l: columns")
   end
 
   local footer = " " .. table.concat(footer_parts, " | ") .. " "
@@ -250,6 +279,10 @@ local function show_floating_window()
   vim.keymap.set('n', '<C-p>', function() M.navigate_prev() end, { buffer = bufnr, nowait = true })
   vim.keymap.set('n', '<C-l>', function() M.navigate_next_column() end, { buffer = bufnr, nowait = true })
   vim.keymap.set('n', '<C-h>', function() M.navigate_prev_column() end, { buffer = bufnr, nowait = true })
+  vim.keymap.set('n', '<M-j>', function() M.navigate_next() end, { buffer = bufnr, nowait = true })
+  vim.keymap.set('n', '<M-k>', function() M.navigate_prev() end, { buffer = bufnr, nowait = true })
+  vim.keymap.set('n', '<M-l>', function() M.navigate_next_column() end, { buffer = bufnr, nowait = true })
+  vim.keymap.set('n', '<M-h>', function() M.navigate_prev_column() end, { buffer = bufnr, nowait = true })
 end
 
 ---Close the floating window
@@ -280,9 +313,7 @@ function M.navigate_next()
 
     -- Update window title (preserve center alignment)
     if state.win and vim.api.nvim_win_is_valid(state.win) then
-      local col_name = state.headers and state.headers[state.col_idx] or "Column " .. state.col_idx
-      local title = string.format(" JSON View - %s (Row %d/%d) ", col_name, next_row_idx, state.total_rows)
-      vim.api.nvim_win_set_config(state.win, { title = title, title_pos = "center" })
+      vim.api.nvim_win_set_config(state.win, { title = window_title(next_row_idx, state.total_rows), title_pos = "center" })
     end
   end
 end
@@ -307,9 +338,7 @@ function M.navigate_prev()
 
     -- Update window title (preserve center alignment)
     if state.win and vim.api.nvim_win_is_valid(state.win) then
-      local col_name = state.headers and state.headers[state.col_idx] or "Column " .. state.col_idx
-      local title = string.format(" JSON View - %s (Row %d/%d) ", col_name, prev_row_idx, state.total_rows)
-      vim.api.nvim_win_set_config(state.win, { title = title, title_pos = "center" })
+      vim.api.nvim_win_set_config(state.win, { title = window_title(prev_row_idx, state.total_rows), title_pos = "center" })
     end
   end
 end
@@ -323,24 +352,44 @@ function M.show()
   if is_results and row_idx and col_idx and result_set_idx then
     -- We're in results buffer on a cell - get actual data from buffer metadata
     local bufnr = vim.api.nvim_get_current_buf()
+    local has_rows, result_rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+    local line_num = vim.api.nvim_win_get_cursor(0)[1]
+    local row = has_rows and (result_rows[line_num] or result_rows[tostring(line_num)])
+    if row then
+      local value = row.values[col_idx]
+      if json_utils.is_json(value) and load_json_content(value, row.row_idx, #row.rows) then
+        state.rows = row.rows
+        state.row_idx = row.row_idx
+        state.col_idx = col_idx
+        state.total_rows = #row.rows
+        state.json_columns = row.json_columns
+        state.headers = row.headers
+        state.column_types = row.column_types
+        show_floating_window()
+      end
+      return
+    end
+
     local ok, parsed_result = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_parsed_result')
     local ok2, json_columns = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_json_columns')
 
     if ok and ok2 and parsed_result and json_columns then
       -- Handle multiple result sets
-      local rows, headers, json_cols
+        local rows, headers, json_cols, column_types
       if parsed_result.multiple_results then
         local result_set = parsed_result.result_sets[result_set_idx]
         if result_set then
           rows = result_set.rows
           headers = result_set.headers
           json_cols = json_columns[result_set_idx]
+          column_types = result_set.column_types
         end
       else
         -- Single result set (backward compatibility)
         rows = parsed_result.rows
         headers = parsed_result.headers
         json_cols = json_columns
+        column_types = parsed_result.column_types
       end
 
       -- Check if this column is a JSON column
@@ -360,6 +409,7 @@ function M.show()
           state.total_rows = total_rows
           state.json_columns = json_cols
           state.headers = headers
+          state.column_types = column_types
         end
       end
     end
@@ -417,9 +467,7 @@ function M.navigate_next_column()
 
     -- Update window title
     if state.win and vim.api.nvim_win_is_valid(state.win) then
-      local col_name = state.headers and state.headers[next_col_idx] or "Column " .. next_col_idx
-      local title = string.format(" JSON View - %s (Row %d/%d) ", col_name, state.row_idx, state.total_rows)
-      vim.api.nvim_win_set_config(state.win, { title = title, title_pos = "center" })
+      vim.api.nvim_win_set_config(state.win, { title = window_title(state.row_idx, state.total_rows), title_pos = "center" })
     end
   end
 end
@@ -472,9 +520,7 @@ function M.navigate_prev_column()
 
     -- Update window title
     if state.win and vim.api.nvim_win_is_valid(state.win) then
-      local col_name = state.headers and state.headers[prev_col_idx] or "Column " .. prev_col_idx
-      local title = string.format(" JSON View - %s (Row %d/%d) ", col_name, state.row_idx, state.total_rows)
-      vim.api.nvim_win_set_config(state.win, { title = title, title_pos = "center" })
+      vim.api.nvim_win_set_config(state.win, { title = window_title(state.row_idx, state.total_rows), title_pos = "center" })
     end
   end
 end
@@ -484,4 +530,3 @@ M._get_current_cell_info = get_current_cell_info
 M._load_json_content = load_json_content
 
 return M
-

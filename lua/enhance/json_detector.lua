@@ -36,8 +36,9 @@ function M.detect_json_columns(headers, rows, sample_size)
     for row_idx = 1, rows_to_check do
       local cell = rows[row_idx][col_idx]
 
-      -- Skip NULL/empty cells (they don't disqualify a column from being JSON)
-      if cell and cell ~= "" then
+      -- SQL CLI output represents database NULL as the literal "NULL".
+      -- Neither it nor empty cells disqualify an otherwise JSON column.
+      if cell and cell ~= "" and cell ~= "NULL" then
         has_non_null = true
 
         -- Check if this cell contains valid JSON
@@ -66,4 +67,3 @@ end
 M._detect_json_columns = M.detect_json_columns
 
 return M
-

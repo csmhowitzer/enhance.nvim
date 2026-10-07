@@ -12,6 +12,7 @@ M.supports_debatch = true
 ---@field query string Inline query string for -Q flag
 ---@field format boolean? Include pipe/trim/width formatting flags (default: true)
 ---@field no_headers boolean? Suppress column headers with -h -1 (default: false)
+---@field metadata boolean? Trim output for the column-type lookup (default: false)
 ---
 ---@param connection table SQL Server connection
 ---@param opts SqlcmdOptions
@@ -46,16 +47,20 @@ function M.build_cmd(connection, opts)
     table.insert(cmd, "-C")
   end
 
-  -- Output formatting flags (pipe separator, trim spaces, wide column width)
-  if opts.format ~= false then
+  -- A finite -y raises sqlcmd's default 256-character limit for JSON/text.
+  -- -y 0 suppresses headers in go-sqlcmd, and -y cannot be combined with
+  -- -W on Windows. The parser trims the padding from finite-width output.
+  if opts.metadata then
     table.insert(cmd, "-s")
     table.insert(cmd, "|")
     table.insert(cmd, "-W")
-    -- Note: -y (variable-length type display width) is intentionally omitted.
-    -- On Windows sqlcmd, -y and -W are mutually exclusive and will error.
-    -- sqlcmd defaults to 256 chars for varchar(max)/nvarchar(max) without -y.
-    -- This is a known constraint that affects the truncated column viewer design
-    -- (see enhance-dev-notes/HANDOFF_CONTEXT.md for details).
+  elseif opts.format ~= false then
+    table.insert(cmd, "-s")
+    table.insert(cmd, "|")
+    table.insert(cmd, "-y")
+    table.insert(cmd, "4096")
+    table.insert(cmd, "-w")
+    table.insert(cmd, "65535")
   end
 
   -- Suppress headers (used for connection tests)
@@ -69,6 +74,45 @@ function M.build_cmd(connection, opts)
   table.insert(cmd, opts.query)
 
   return cmd
+end
+
+---@param query string SQL statement returning a table
+---@return string SQL query for the result-column types
+local function describe_sql(query)
+  local escaped = query:gsub("'", "''")
+  return "SELECT column_ordinal, system_type_name "
+    .. "FROM sys.dm_exec_describe_first_result_set(N'" .. escaped .. "', NULL, 0) "
+    .. "WHERE is_hidden = 0 AND error_number IS NULL ORDER BY column_ordinal;"
+end
+
+---@param output string sqlcmd metadata output
+---@param column_count number Number of columns in the executed result
+---@return string[]? column_types
+local function parse_column_types(output, column_count)
+  local types = {}
+  for line in output:gmatch("[^\r\n]+") do
+    local ordinal, type_name = line:match("^%s*(%d+)%s*|%s*(.-)%s*$")
+    if ordinal and tonumber(ordinal) == #types + 1 and type_name ~= "" and type_name ~= "NULL" then
+      types[#types + 1] = type_name
+    end
+  end
+  return #types == column_count and types or nil
+end
+
+---Describe the actual types of a query's visible result columns, in display order.
+---Compilation can fail for temporary tables or dynamic SQL; in that case leave
+---the cells untyped rather than guessing from their text.
+---@param connection table SQL Server connection
+---@param query string SQL statement returning a table
+---@param column_count number Number of columns in the executed result
+---@return string[]? column_types
+function M.describe_columns(connection, query, column_count)
+  if not column_count or column_count == 0 then return nil end
+  local output = vim.fn.system(M.build_cmd(connection, {
+    query = describe_sql(query), metadata = true, no_headers = true,
+  }))
+  if vim.v.shell_error ~= 0 or M.has_error(vim.split(output, "\n")) then return nil end
+  return parse_column_types(output, column_count)
 end
 
 ---SQL Server returns native row counts; no query rewriting is needed.
@@ -221,6 +265,9 @@ function M.execute_single(connection, statement_text)
 
   local parser = require("enhance.parser")
   local parsed_result = parser.parse(output_lines, M.grammar)
+  if parsed_result and parsed_result.headers and #parsed_result.headers > 0 then
+    parsed_result.column_types = M.describe_columns(connection, statement_text, #parsed_result.headers)
+  end
 
   return parsed_result, nil, duration, row_count
 end
@@ -231,6 +278,8 @@ M._prepare_query    = M.prepare_query
 M._has_error        = M.has_error
 M._test_connection  = M.test_connection
 M._execute_single   = M.execute_single
+M._describe_columns  = M.describe_columns
+M._describe_sql      = describe_sql
+M._parse_column_types = parse_column_types
 
 return M
-

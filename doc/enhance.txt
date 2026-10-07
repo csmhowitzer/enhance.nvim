@@ -206,9 +206,49 @@ Query Buffer Keymaps                                     *enhance-keymaps-query*
                         • Visual mode: Execute selected text
 :w                      Save query (prompts for filename if new)
 
+SQL completion                                           *enhance-completion*
+
+Enhance SQL Server query buffers expose their connection to
+vim-dadbod-completion. With its blink.cmp source enabled for SQL files,
+typing offers table names, columns (including aliases), and SQL keywords.
+Use <C-x><C-o> in insert mode for built-in omnifunc completion.
+Each query buffer uses its own database connection. See README.md for the
+blink.cmp source configuration.
+
 Results Buffer Keymaps                                   *enhance-keymaps-results*
 
-q                       Close results window
+yc                      Copy complete cell under cursor
+yr                      Copy complete row as tab-separated values
+ys                      Copy current table with # row numbers and headers as TSV
+gk                      Show any cell (truncated or not) in a scrollable popup
+                        Title: column header and known SQL type; border: cell color
+                        Detected JSON opens the JSON viewer instead
+                        q or Esc closes it
+                        JSON is pretty-printed with JSON syntax highlighting;
+                        non-JSON cells retain their result colors
+<M-k> / <M-j>           Previous / next result set (Alt-k / Alt-j)
+<M-h> / <M-l>           Previous / next column (Alt-h / Alt-l)
+h / j / k / l           Native cursor movement
+                        These mappings are local to results buffers. Copying
+                        uses full parsed values even if display is truncated,
+                        and writes the unnamed register and system clipboard.
+                        yc and yr require a data row; yc requires a cell. ys
+                        also works from the result set header or an empty table.
+                        Result sets wrap from last to first and first to last.
+                        Alt-h/l wrap around within the same row; Alt-l enters
+                        the first data row from the status line. Plain hjkl
+                        keep their native movement; gk opens the cell popup.
+
+JSON Viewer Keymaps                                      *enhance-keymaps-json*
+
+gj / <leader>dj        Open JSON cell under cursor
+<M-j> / <M-k>           Next / previous JSON row (Alt-j / Alt-k)
+<M-h> / <M-l>           Previous / next JSON column (Alt-h / Alt-l)
+<C-n> / <C-p>           Next / previous JSON row (existing mappings)
+<C-h> / <C-l>           Previous / next JSON column (existing mappings)
+q / <Esc>               Close JSON viewer
+                        The title shows the column and known SQL data type;
+                        it updates when changing rows or JSON columns.
 
 ==============================================================================
 7. WORKFLOW                                              *enhance-workflow*
@@ -263,6 +303,14 @@ SQL Server                                               *enhance-sqlserver*
 <
 
 Requires: `sqlcmd` CLI tool
+
+SQL Server result values with numeric column types use `EnhanceNumberCell`;
+date/time types use `EnhanceDateCell`. These colors follow result-column SQL
+types, not the appearance of their text: `varchar`/`nvarchar` dates and numbers
+remain plain. NULL and detected JSON retain their own highlights. Enhance
+requests type metadata with an additional `sqlcmd` query per result set; if
+the query cannot be described (for example, it references a local temporary
+table), values simply remain uncolored by type.
 
 SQLite                                                   *enhance-sqlite*
 
@@ -495,4 +543,3 @@ Solution:
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:
-

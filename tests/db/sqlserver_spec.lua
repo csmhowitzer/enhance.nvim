@@ -51,6 +51,30 @@ describe("enhance.db.sqlserver contract", function()
   end)
 end)
 
+describe("enhance.db.sqlserver result column types", function()
+  it("requests visible SQL Server result types without guessing from values", function()
+    local sql = adapter._describe_sql("SELECT CAST('2026-01-17' AS date) AS StartedAt")
+    assert.matches("sys%.dm_exec_describe_first_result_set", sql)
+    assert.matches("CAST%(''2026%-01%-17'' AS date%)", sql)
+    assert.matches("is_hidden = 0", sql)
+
+    local cmd = adapter.build_cmd({ type = "sqlserver" }, {
+      query = sql, metadata = true, no_headers = true,
+    })
+    assert.is_true(vim.tbl_contains(cmd, "-W"))
+    assert.is_true(vim.tbl_contains(cmd, "-h"))
+    assert.is_false(vim.tbl_contains(cmd, "-y"))
+  end)
+
+  it("keeps numeric, date and NVARCHAR column types in ordinal order", function()
+    local output = "1|int\n2|datetime2(7)\n3|nvarchar(255)\n\n(3 rows affected)\n"
+    assert.are.same({ "int", "datetime2(7)", "nvarchar(255)" },
+      adapter._parse_column_types(output, 3))
+    assert.is_nil(adapter._parse_column_types(output, 4))
+    assert.is_nil(adapter._parse_column_types("1|int\n3|date\n", 2))
+  end)
+end)
+
 -- ---------------------------------------------------------------------------
 -- build_cmd — flag generation (deterministic, no live DB needed)
 -- ---------------------------------------------------------------------------
@@ -116,15 +140,16 @@ describe("enhance.db.sqlserver build_cmd", function()
     end
   end)
 
-  it("includes formatting flags by default (-s, -W, -y, 8000)", function()
+  it("raises the variable text limit without suppressing sqlcmd headers", function()
     local cmd = adapter.build_cmd(base, { query = "SELECT 1;" })
-    local s, W, y = false, false, false
+    local flags = {}
     for i, v in ipairs(cmd) do
-      if v == "-s" then s = true end
-      if v == "-W" then W = true end
-      if v == "-y" and cmd[i+1] == "8000" then y = true end
+      flags[v] = cmd[i + 1]
     end
-    assert.is_true(s); assert.is_true(W); assert.is_true(y)
+    assert.equals("|", flags["-s"])
+    assert.equals("4096", flags["-y"])
+    assert.equals("65535", flags["-w"])
+    assert.is_nil(flags["-W"])
   end)
 
   it("omits formatting flags when format = false", function()
@@ -132,6 +157,8 @@ describe("enhance.db.sqlserver build_cmd", function()
     for _, v in ipairs(cmd) do
       assert.not_equals("-s", v)
       assert.not_equals("-W", v)
+      assert.not_equals("-y", v)
+      assert.not_equals("-w", v)
     end
   end)
 
@@ -285,6 +312,20 @@ describe("enhance.db.sqlserver parse output", function()
     assert.are.same({ "Name" }, result.headers)
     assert.equals(2, #result.rows)
     assert.are.same({ "Alice" }, result.rows[1])
+  end)
+
+  it("parses padded sqlcmd output without losing JSON beyond 256 characters", function()
+    local json = '{"data":"' .. string.rep('x', 300) .. '"}'
+    local lines = {
+      "ID         |" .. "payload" .. string.rep(' ', 4096 - #"payload"),
+      string.rep('-', 11) .. "|" .. string.rep('-', 4096),
+      "          1|" .. json .. string.rep(' ', 4096 - #json),
+      "(1 rows affected)",
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.are.same({ "ID", "payload" }, result.headers)
+    assert.are.same({ "1", json }, result.rows[1])
+    assert.is_true(require('enhance.json_detector').detect_json_columns(result.headers, result.rows)[2])
   end)
 
   it("detects multiple result sets via '(X rows affected)' markers", function()

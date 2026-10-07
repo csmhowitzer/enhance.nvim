@@ -27,6 +27,7 @@ function M.create_query_buffer(connection)
   -- Check if buffer already exists
   local existing_buf = find_buffer_by_name(buf_name)
   if existing_buf then
+    require('enhance.completion').setup(existing_buf, connection)
     -- Buffer exists, find or create window for it
     -- Move to rightmost window (away from explorer)
     vim.cmd('wincmd l')
@@ -92,6 +93,8 @@ end
 ---@param bufnr integer Buffer number
 function M.setup_keymaps(bufnr)
   local config = require("enhance").get_config()
+
+  require('enhance.completion').setup(bufnr, vim.b[bufnr].enhance_connection)
 
   -- Execute query keymap
   vim.keymap.set('n', config.keymaps.execute_query, function()
@@ -217,4 +220,3 @@ end
 M._setup_keymaps = M.setup_keymaps
 
 return M
-

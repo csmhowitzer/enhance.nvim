@@ -14,6 +14,23 @@ describe("enhance.query", function()
   end)
   
   describe("setup_keymaps", function()
+    it("uses the query buffer's own SQL Server connection for completion", function()
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.bo[buf].filetype = 'sql'
+      vim.b[buf].enhance_connection = {
+        type = 'sqlserver', server = 'localhost', database = 'example_sqlserver',
+        user = 'reader', password = 'test',
+      }
+
+      query._setup_keymaps(buf)
+
+      assert.equals(
+        'sqlserver://localhost/example_sqlserver;user=reader;password=test;TrustServerCertificate=true',
+        vim.b[buf].db
+      )
+      vim.api.nvim_buf_delete(buf, { force = true })
+    end)
+
     it("should set up keymaps for query buffer", function()
       -- Create a test buffer
       local buf = vim.api.nvim_create_buf(false, true)
@@ -187,4 +204,3 @@ describe("enhance.query", function()
     end)
   end)
 end)
-

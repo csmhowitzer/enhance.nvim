@@ -115,6 +115,16 @@ function M.setup_highlights()
     default = true
   })
 
+  vim.api.nvim_set_hl(0, 'EnhanceNumberCell', {
+    fg = '#fab387',  -- Peach (Catppuccin Mocha)
+    default = true
+  })
+
+  vim.api.nvim_set_hl(0, 'EnhanceDateCell', {
+    fg = '#cba6f7',  -- Mauve (Catppuccin Mocha)
+    default = true
+  })
+
   -- JSON viewer floating window highlights
   vim.api.nvim_set_hl(0, 'EnhanceJsonBorder', {
     fg = '#f9e2af',  -- Yellow (catppuccin mocha yellow)
@@ -289,4 +299,3 @@ end
 M._default_config = default_config
 
 return M
-

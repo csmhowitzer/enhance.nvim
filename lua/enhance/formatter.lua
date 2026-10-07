@@ -140,6 +140,7 @@ end
 ---@param parsed_result table Parsed result from parser {headers, rows, metadata} or {multiple_results, result_sets, metadata}
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
+---@return table<number, table> Data rows by formatted line number
 function M.format(parsed_result, user_config)
   -- Check if we have multiple result sets
   if parsed_result.multiple_results and parsed_result.result_sets then
@@ -159,8 +160,10 @@ function M.format(parsed_result, user_config)
 
   -- Calculate column widths
   local widths = calculate_column_widths(headers, rows, config)
+  local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
 
   local lines = {}
+  local row_map = {}
 
   -- Format header
   table.insert(lines, format_row(headers, widths, config))
@@ -169,20 +172,27 @@ function M.format(parsed_result, user_config)
   table.insert(lines, generate_separator(widths, config))
 
   -- Format data rows
-  for _, row in ipairs(rows) do
+  for row_idx, row in ipairs(rows) do
     table.insert(lines, format_row(row, widths, config))
+    row_map[#lines] = {
+      values = row, widths = widths, json_columns = json_columns,
+      column_types = parsed_result.column_types,
+      rows = rows, headers = headers, row_idx = row_idx,
+    }
   end
 
-  return lines
+  return lines, row_map
 end
 
 ---Format multiple result sets (from multiple SELECT statements)
 ---@param result_sets table[] Array of result sets, each with {headers, rows, metadata}
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
+---@return table<number, table> Data rows by formatted line number
 function M.format_multiple_result_sets(result_sets, user_config)
   local config = vim.tbl_deep_extend("force", default_config, user_config or {})
   local all_lines = {}
+  local row_map = {}
 
   for i, result_set in ipairs(result_sets) do
     -- Add "Result Set X/Y" header
@@ -198,6 +208,7 @@ function M.format_multiple_result_sets(result_sets, user_config)
 
     if #headers > 0 then
       local widths = calculate_column_widths(headers, rows, config)
+      local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
 
       -- Format header
       table.insert(all_lines, format_row(headers, widths, config))
@@ -206,15 +217,20 @@ function M.format_multiple_result_sets(result_sets, user_config)
       table.insert(all_lines, generate_separator(widths, config))
 
       -- Format data rows
-      for _, row in ipairs(rows) do
+      for row_idx, row in ipairs(rows) do
         table.insert(all_lines, format_row(row, widths, config))
+        row_map[#all_lines] = {
+          values = row, widths = widths, json_columns = json_columns,
+          column_types = result_set.column_types,
+          rows = rows, headers = headers, row_idx = row_idx,
+        }
       end
     else
       table.insert(all_lines, "No results")
     end
   end
 
-  return all_lines
+  return all_lines, row_map
 end
 
 ---Format a single statement result
@@ -223,8 +239,10 @@ end
 ---@param total_statements number Total number of statements
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
+---@return table<number, table> Data rows by formatted line number
 local function format_single_statement(statement, statement_num, total_statements, user_config)
   local lines = {}
+  local row_map = {}
 
   -- Add "Result Set X/Y | Rows: N | XXms" header if multiple statements
   if total_statements > 1 then
@@ -256,12 +274,16 @@ local function format_single_statement(statement, statement_num, total_statement
   -- Format based on statement type
   if statement.result_table then
     -- SELECT: format table
-    local table_lines = M.format(
-      { headers = statement.result_table.headers, rows = statement.result_table.rows },
+    local table_lines, table_rows = M.format(
+      { headers = statement.result_table.headers, rows = statement.result_table.rows,
+        column_types = statement.result_table.column_types },
       user_config
     )
-    for _, line in ipairs(table_lines) do
+    for line_num, line in ipairs(table_lines) do
       table.insert(lines, line)
+      if table_rows and table_rows[line_num] then
+        row_map[#lines] = table_rows[line_num]
+      end
     end
   elseif statement.message then
     -- INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/ERROR: show message
@@ -275,7 +297,7 @@ local function format_single_statement(statement, statement_num, total_statement
   -- No status line at the bottom for multiple statements
   -- (global status line will be added by results.display)
 
-  return lines
+  return lines, row_map
 end
 
 ---Format multiple statement results
@@ -283,16 +305,21 @@ end
 ---@param user_config FormatterConfig? User configuration overrides
 ---@return string[] Formatted lines
 ---@return number Total row count from all table results
+---@return table<number, table> Data rows by formatted line number
 function M.format_multiple_statements(statements, user_config)
   local all_lines = {}
   local total_rows = 0
+  local row_map = {}
 
   for i, statement in ipairs(statements) do
-    local statement_lines = format_single_statement(statement, i, #statements, user_config)
+    local statement_lines, statement_rows = format_single_statement(statement, i, #statements, user_config)
 
     -- Add statement lines
-    for _, line in ipairs(statement_lines) do
+    for line_num, line in ipairs(statement_lines) do
       table.insert(all_lines, line)
+      if statement_rows[line_num] then
+        row_map[#all_lines] = statement_rows[line_num]
+      end
     end
 
     -- Count rows from both table results (SELECT) and DML statements (INSERT/UPDATE/DELETE)
@@ -306,7 +333,7 @@ function M.format_multiple_statements(statements, user_config)
     end
   end
 
-  return all_lines, total_rows
+  return all_lines, total_rows, row_map
 end
 
 -- Expose internal functions for testing
@@ -318,4 +345,3 @@ M._generate_separator = generate_separator
 M._format_single_statement = format_single_statement
 
 return M
-

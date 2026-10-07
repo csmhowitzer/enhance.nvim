@@ -2,6 +2,7 @@
 -- Handles displaying query results in buffers
 
 local M = {}
+local json_utils = require('enhance.json_utils')
 
 ---Format number with comma separators (e.g., 1000 -> 1,000)
 ---@param num number Number to format
@@ -206,6 +207,48 @@ local function build_line_number_mapping(lines, config)
   return mapping
 end
 
+---Associate displayed result sections with their original table values.
+---@param lines string[]
+---@param result_rows table<number, table>
+---@param metadata table?
+---@param offset integer Status line offset
+---@return table[]
+local function build_result_sections(lines, result_rows, metadata, offset)
+  local sections = {}
+  for line_num, line in ipairs(lines) do
+    if line:match('^Result Set %d+/%d+') then
+      sections[#sections + 1] = { header_line = line_num, row_lines = {} }
+    end
+  end
+  if #sections == 0 then
+    sections[1] = { header_line = offset + 1, row_lines = {} }
+  end
+  local section_idx = 1
+  for line_num = 1, #lines do
+    if section_idx < #sections and line_num >= sections[section_idx + 1].header_line then
+      section_idx = section_idx + 1
+    end
+    local row = result_rows[line_num]
+    if row then
+      local section = sections[section_idx]
+      section.row_lines[row.row_idx] = line_num
+      section.headers, section.rows = row.headers, row.rows
+    end
+  end
+  for i, section in ipairs(sections) do
+    local statement = metadata and metadata.statement_results and metadata.statement_results[i]
+    local parsed = metadata and metadata.parsed_result
+    local table_result = statement and statement.result_table
+    if not (metadata and metadata.statement_results) and parsed then
+      table_result = parsed.multiple_results and parsed.result_sets[i] or i == 1 and parsed
+    end
+    if table_result and not section.headers then
+      section.headers, section.rows = table_result.headers, table_result.rows
+    end
+  end
+  return sections
+end
+
 ---Display query results in a buffer
 ---@param lines string[] Result lines
 ---@param connection table Database connection
@@ -310,6 +353,18 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Build and store line number mapping for data rows
   local line_number_mapping = build_line_number_mapping(lines, config)
   vim.api.nvim_buf_set_var(buf, 'enhance_line_numbers', line_number_mapping)
+
+  -- Keep original values and rendered column widths aligned with displayed rows.
+  -- A reused buffer must lose its previous query's mapping.
+  local result_rows = {}
+  local offset = metadata and config.status_line and config.status_line.enabled
+    and config.status_line.position == 'top' and 2 or 0
+  for line_num, row in pairs(metadata and metadata.result_rows or {}) do
+    result_rows[line_num + offset] = row
+  end
+  vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', result_rows)
+
+  vim.api.nvim_buf_set_var(buf, 'enhance_result_sections', build_result_sections(lines, result_rows, metadata, offset))
 
   -- Associate result buffer with query buffer
   if query_bufnr then
@@ -422,9 +477,16 @@ function M.display(lines, connection, query_bufnr, metadata)
   end)
 
   -- Apply JSON highlighting to detected JSON columns
-  if json_columns then
+  if json_columns or metadata and metadata.result_rows then
     vim.schedule(function()
       M.apply_json_highlighting(buf, config, json_columns, metadata)
+    end)
+  end
+
+  -- Type colors use SQL Server column metadata; other databases stay plain.
+  if metadata and metadata.result_rows then
+    vim.schedule(function()
+      M.apply_type_highlighting(buf, config, metadata)
     end)
   end
 
@@ -485,6 +547,31 @@ end
 ---Setup keymaps for results buffer
 ---@param bufnr integer Buffer number
 function M.setup_keymaps(bufnr)
+  vim.keymap.set('n', 'yc', function()
+    M.copy_cell()
+  end, { buffer = bufnr, desc = "Copy full result cell" })
+
+  vim.keymap.set('n', 'yr', function()
+    M.copy_row()
+  end, { buffer = bufnr, desc = "Copy full result row" })
+
+  vim.keymap.set('n', 'ys', function()
+    M.copy_result_set()
+  end, { buffer = bufnr, desc = "Copy result set with headers and row numbers" })
+
+  vim.keymap.set('n', 'gk', function()
+    M.show_cell()
+  end, { buffer = bufnr, desc = "Show full result cell" })
+
+  for _, mapping in ipairs({
+    { '<M-k>', 'set', -1 }, { '<M-j>', 'set', 1 },
+    { '<M-h>', 'column', -1 }, { '<M-l>', 'column', 1 },
+  }) do
+    vim.keymap.set('n', mapping[1], function()
+      M.navigate(mapping[2], mapping[3])
+    end, { buffer = bufnr, desc = (mapping[3] < 0 and 'Previous ' or 'Next ') .. 'result ' .. mapping[2] })
+  end
+
   -- Refresh (re-execute last query)
   vim.keymap.set('n', 'r', function()
     vim.notify("Refresh not yet implemented", vim.log.levels.WARN)
@@ -500,6 +587,290 @@ function M.setup_keymaps(bufnr)
   vim.api.nvim_buf_call(bufnr, function()
     vim.cmd([[cnoreabbrev <buffer> w Write]])
   end)
+end
+
+---Get the original data row under the cursor in a results buffer.
+---@return table? row Row values and rendered column widths
+local function current_result_row()
+  local bufnr = vim.api.nvim_get_current_buf()
+  if vim.bo[bufnr].filetype ~= 'enhance-results' then return nil end
+  local ok, rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  if not ok then return nil end
+  local line_num = vim.api.nvim_win_get_cursor(0)[1]
+  return rows[line_num] or rows[tostring(line_num)]
+end
+
+---Return the rendered byte range of a column (excluding the surrounding separators).
+---@param widths number[]
+---@param column number
+---@return number start_col 0-based inclusive
+---@return number end_col 0-based exclusive
+local function column_range(widths, column)
+  local start_col = 2 -- "| " before the first value
+  for i = 1, column - 1 do
+    start_col = start_col + widths[i] + 3 -- " | " between columns
+  end
+  return start_col, start_col + widths[column]
+end
+
+local numeric_types = {
+  tinyint = true, smallint = true, int = true, bigint = true,
+  decimal = true, numeric = true, float = true, real = true,
+  money = true, smallmoney = true, bit = true,
+}
+local date_types = {
+  date = true, time = true, datetime = true, datetime2 = true,
+  smalldatetime = true, datetimeoffset = true,
+}
+
+---Return a result-cell highlight only for known SQL Server types.
+---@param type_name string?
+---@return string? highlight_group
+local function type_highlight(type_name)
+  if type(type_name) ~= 'string' then return nil end
+  local base = type_name:lower():match('^%s*([%a]+)')
+  if not base then return nil end
+  if numeric_types[base] then return 'EnhanceNumberCell' end
+  if date_types[base] then return 'EnhanceDateCell' end
+  return nil
+end
+
+---Color SQL Server result values by their declared result-column type.
+---NULL and JSON cells keep their existing, separate highlight groups.
+---@param bufnr number Buffer number
+---@param config table Plugin configuration
+---@param metadata table? Execution metadata with formatted row positions
+function M.apply_type_highlighting(bufnr, config, metadata)
+  if not vim.api.nvim_buf_is_valid(bufnr) then return end
+  local ns_id = vim.api.nvim_create_namespace('enhance_type_highlight')
+  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+  if not metadata or not metadata.result_rows then return end
+
+  local offset = config.status_line and config.status_line.enabled
+    and config.status_line.position == 'top' and 2 or 0
+  for line_num, row in pairs(metadata.result_rows) do
+    for col, type_name in ipairs(row.column_types or {}) do
+      local value = row.values[col]
+      local group = type_highlight(type_name)
+      if group and value ~= nil and value ~= '' and value ~= 'NULL'
+          and not (row.json_columns and row.json_columns[col] and json_utils.is_json(value)) then
+        local start_col, end_col = column_range(row.widths, col)
+        vim.api.nvim_buf_add_highlight(bufnr, ns_id, group, line_num + offset - 1, start_col, end_col)
+      end
+    end
+  end
+end
+
+---Show the complete value under the cursor in a scrollable floating window.
+---Detected JSON uses the syntax-highlighted JSON viewer instead.
+function M.show_cell()
+  local row = current_result_row()
+  if not row then
+    vim.notify("Place the cursor on a result data row", vim.log.levels.WARN)
+    return
+  end
+
+  local cursor_col = vim.api.nvim_win_get_cursor(0)[2]
+  local column
+  for i = 1, #row.widths do
+    local start_col, end_col = column_range(row.widths, i)
+    if cursor_col >= start_col and cursor_col < end_col then
+      column = i
+      break
+    end
+  end
+  if not column then
+    vim.notify("Place the cursor inside a result cell", vim.log.levels.WARN)
+    return
+  end
+
+  local value = row.values[column]
+  local text = value == nil and 'NULL' or tostring(value)
+  local is_json = row.json_columns and row.json_columns[column] and json_utils.is_json(text)
+  if is_json then
+    require('enhance.json_viewer').show()
+    return
+  end
+
+  local group = text == 'NULL' and 'EnhanceNull'
+    or type_highlight(row.column_types and row.column_types[column])
+  local header = row.headers and row.headers[column]
+  if not header or header == '' then header = string.format('Column %d', column) end
+  local type_name = row.column_types and row.column_types[column]
+  local title = type_name and type_name ~= ''
+    and string.format(' %s (%s) ', header, type_name)
+    or string.format(' %s ', header)
+  local lines = vim.split(text, '\n', { plain = true })
+  local max_width = math.max(1, math.min(80, vim.o.columns - 4))
+  local width = math.min(max_width, math.max(1, vim.fn.strdisplaywidth(title)))
+  for _, line in ipairs(lines) do
+    width = math.min(max_width, math.max(width, vim.fn.strdisplaywidth(line)))
+  end
+  local display_lines = 0
+  for _, line in ipairs(lines) do
+    display_lines = display_lines + math.max(1, math.ceil(vim.fn.strdisplaywidth(line) / width))
+  end
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = 'wipe'
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  if group then
+    local ns = vim.api.nvim_create_namespace('enhance_cell_hover')
+    for i, line in ipairs(lines) do
+      vim.api.nvim_buf_add_highlight(buf, ns, group, i - 1, 0, #line)
+    end
+  end
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = 'cursor', row = 1, col = 0,
+    width = width, height = math.min(display_lines, math.max(1, vim.o.lines - 4)),
+    style = 'minimal', border = 'rounded', title = title, title_pos = 'center',
+  })
+  vim.wo[win].wrap = true
+  local winhighlight = 'NormalFloat:Normal'
+  if group then
+    winhighlight = winhighlight .. ',FloatBorder:' .. group .. ',FloatTitle:' .. group
+  end
+  vim.wo[win].winhighlight = winhighlight
+  local function close()
+    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+  end
+  vim.keymap.set('n', 'q', close, { buffer = buf, nowait = true, desc = 'Close cell popup' })
+  vim.keymap.set('n', '<Esc>', close, { buffer = buf, nowait = true, desc = 'Close cell popup' })
+end
+
+---Return the section at the cursor and its index (or the first section before it).
+---@return table?, integer?, table?
+local function current_section()
+  local bufnr = vim.api.nvim_get_current_buf()
+  if vim.bo[bufnr].filetype ~= 'enhance-results' then return end
+  local ok, sections = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_sections')
+  if not ok or #sections == 0 then return end
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local index = 0
+  for i, section in ipairs(sections) do
+    if line < section.header_line then break end
+    index = i
+  end
+  return sections[index], index, sections
+end
+
+---Move to the next/previous result set or column in a results buffer.
+---@param kind 'set'|'column'
+---@param direction integer -1 or 1
+function M.navigate(kind, direction)
+  local section, index, sections = current_section()
+  if not sections then return end
+  local cursor = vim.api.nvim_win_get_cursor(0)
+
+  if kind == 'set' then
+    local target_idx = index == 0 and (direction > 0 and 1 or #sections)
+      or (index - 1 + direction) % #sections + 1
+    local target = sections[target_idx]
+    local line = target.row_lines[1] or target.header_line
+    local col = target.row_lines[1] and 2 or 0
+    vim.api.nvim_win_set_cursor(0, { line, col })
+    return
+  end
+  -- The status line sits before the first section. Right enters its table.
+  if not section and direction > 0 then section = sections[1] end
+  if not section or not section.row_lines[1] then return end
+
+  local current_row = 0
+  for row_idx, line in ipairs(section.row_lines) do
+    if line > cursor[1] then break end
+    current_row = row_idx
+  end
+  if kind ~= 'column' then return end
+  local line = section.row_lines[math.max(1, current_row)]
+  local row = vim.b.enhance_result_rows[line]
+  if type(row) ~= 'table' or #row.widths == 0 then return end
+  local col_index = 0
+  if current_row > 0 then
+    for i = 1, #row.widths do
+      local start_col = column_range(row.widths, i)
+      if cursor[2] < start_col then break end
+      col_index = i
+    end
+  end
+  local target_col = col_index + direction
+  if target_col < 1 then target_col = #row.widths end
+  if target_col > #row.widths then target_col = 1 end
+  local start_col = column_range(row.widths, target_col)
+  vim.api.nvim_win_set_cursor(0, { line, start_col })
+end
+
+---Copy to both Neovim's unnamed register and the system clipboard.
+---@param text string
+local function copy_text(text)
+  vim.fn.setreg('"', text)
+  local ok = pcall(vim.fn.setreg, '+', text)
+  if not ok then
+    vim.notify("System clipboard unavailable; copied to the unnamed register", vim.log.levels.WARN)
+  end
+end
+
+---Copy the complete value under the cursor (including text hidden by truncation).
+function M.copy_cell()
+  local row = current_result_row()
+  if not row then
+    vim.notify("Place the cursor on a result data row", vim.log.levels.WARN)
+    return
+  end
+
+  local col = vim.api.nvim_win_get_cursor(0)[2]
+  for i = 1, #row.widths do
+    local start_col, end_col = column_range(row.widths, i)
+    if col >= start_col and col < end_col then
+      local value = row.values[i]
+      copy_text(value == nil and 'NULL' or tostring(value))
+      return
+    end
+  end
+  vim.notify("Place the cursor inside a result cell", vim.log.levels.WARN)
+end
+
+---Copy all full cell values on the current result row as tab-separated text.
+function M.copy_row()
+  local row = current_result_row()
+  if not row then
+    vim.notify("Place the cursor on a result data row", vim.log.levels.WARN)
+    return
+  end
+
+  local values = {}
+  for i = 1, #row.widths do
+    local value = row.values[i]
+    values[i] = value == nil and 'NULL' or tostring(value)
+  end
+  copy_text(table.concat(values, '\t'))
+end
+
+---Copy the current table as TSV with full cell values, headers and row numbers.
+function M.copy_result_set()
+  local section = current_section()
+  if not section or not section.headers or #section.headers == 0 then
+    vim.notify('Place the cursor in a result set with columns', vim.log.levels.WARN)
+    return
+  end
+
+  local function tsv(value)
+    value = value == nil and 'NULL' or tostring(value)
+    if value:find('[\t\r\n]') then
+      return '"' .. value:gsub('"', '""') .. '"'
+    end
+    return value
+  end
+  local lines = { '#\t' .. table.concat(section.headers, '\t') }
+  for row_idx, row in ipairs(section.rows or {}) do
+    local values = { tostring(row_idx) }
+    for col = 1, #section.headers do
+      values[#values + 1] = tsv(row[col])
+    end
+    lines[#lines + 1] = table.concat(values, '\t')
+  end
+  copy_text(table.concat(lines, '\n'))
 end
 
 ---Save query buffer from results buffer (called via :w abbreviation)
@@ -730,6 +1101,23 @@ function M.apply_json_highlighting(bufnr, config, json_columns, metadata)
 
   -- Create namespace for JSON highlights
   local ns_id = vim.api.nvim_create_namespace('enhance_json_highlight')
+  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+
+  -- Rendered widths, rather than pipe scanning, locate JSON values even when
+  -- the original value contains pipes or has been shortened for display.
+  if metadata and metadata.result_rows then
+    local offset = config.status_line and config.status_line.enabled
+      and config.status_line.position == 'top' and 2 or 0
+    for line_num, row in pairs(metadata.result_rows) do
+      for col, is_json in pairs(row.json_columns or {}) do
+        if is_json and json_utils.is_json(row.values[col]) then
+          local start_col, end_col = column_range(row.widths, col)
+          vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'EnhanceJsonCell', line_num + offset - 1, start_col, end_col)
+        end
+      end
+    end
+    return
+  end
 
   -- Get all lines in buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -1033,9 +1421,9 @@ end
 
 -- Expose for testing
 M._setup_keymaps = M.setup_keymaps
+M._build_result_sections = build_result_sections
 M._apply_null_highlighting = M.apply_null_highlighting
 M._apply_json_highlighting = M.apply_json_highlighting
 M._apply_result_set_highlighting = M.apply_result_set_highlighting
 
 return M
-

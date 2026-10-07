@@ -169,6 +169,7 @@ local function make_statement_result(stmt, connection, duration, row_count, pars
     result.result_table = {
       headers = parsed_result and parsed_result.headers or {},
       rows    = parsed_result and parsed_result.rows    or {},
+      column_types = parsed_result and parsed_result.column_types,
     }
     result.message = nil
   elseif stmt.type == "INSERT" or stmt.type == "UPDATE" or stmt.type == "DELETE" then
@@ -223,7 +224,7 @@ local function execute_debatch(connection, groups, query_bufnr, execute_single_f
   end
 
   local formatter = require("enhance.formatter")
-  local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+  local formatted_lines, total_table_rows, result_rows = formatter.format_multiple_statements(all_statement_results)
 
   -- Fallback: if the error result wasn't captured by the formatter, append a notice
   if had_error then
@@ -245,6 +246,7 @@ local function execute_debatch(connection, groups, query_bufnr, execute_single_f
     total_table_rows = total_table_rows,
     is_error         = had_error,
     statement_results = all_statement_results,
+    result_rows     = result_rows,
   }
 
   require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
@@ -407,7 +409,8 @@ function M.execute_sqlite(connection, query, query_bufnr)
               metadata
             )
             local total_table_rows
-            formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
+            formatted_lines, total_table_rows, metadata.result_rows = formatter.format_multiple_statements(matched_results)
+            metadata.statement_results = matched_results
 
             -- Update metadata for multiple statements
             -- Use matched_results count (filters out transaction control statements)
@@ -415,7 +418,7 @@ function M.execute_sqlite(connection, query, query_bufnr)
             metadata.total_table_rows = total_table_rows
           else
             -- Fallback to old format for backward compatibility
-            formatted_lines = formatter.format(parsed_result)
+            formatted_lines, metadata.result_rows = formatter.format(parsed_result)
           end
 
           -- Add parsed result to metadata for JSON detection
@@ -554,7 +557,7 @@ local function parse_batch_error_output(output_lines, query, connection, duratio
   })
 
   local formatter = require("enhance.formatter")
-  local formatted_lines, total_table_rows = formatter.format_multiple_statements(all_statement_results)
+  local formatted_lines, total_table_rows, result_rows = formatter.format_multiple_statements(all_statement_results)
 
   local metadata = {
     execution_time    = duration,
@@ -566,6 +569,7 @@ local function parse_batch_error_output(output_lines, query, connection, duratio
     total_table_rows  = total_table_rows,
     is_error          = true,
     statement_results = all_statement_results,
+    result_rows      = result_rows,
   }
 
   vim.notify("Query execution failed", vim.log.levels.ERROR)
@@ -699,8 +703,16 @@ function M.execute_sqlserver(connection, query, query_bufnr)
               parsed_result,
               metadata
             )
+            for _, result in ipairs(matched_results) do
+              if result.result_table and #result.result_table.headers > 0 then
+                result.result_table.column_types = sqlserver_adapter.describe_columns(
+                  connection, result.query_text, #result.result_table.headers
+                )
+              end
+            end
             local total_table_rows
-            formatted_lines, total_table_rows = formatter.format_multiple_statements(matched_results)
+            formatted_lines, total_table_rows, metadata.result_rows = formatter.format_multiple_statements(matched_results)
+            metadata.statement_results = matched_results
 
             -- Update metadata for multiple statements
             -- Use matched_results count (filters out transaction control statements)
@@ -708,7 +720,7 @@ function M.execute_sqlserver(connection, query, query_bufnr)
             metadata.total_table_rows = total_table_rows
           else
             -- Fallback to old format for backward compatibility
-            formatted_lines = formatter.format(parsed_result)
+            formatted_lines, metadata.result_rows = formatter.format(parsed_result)
           end
 
           -- Add parsed result to metadata for JSON detection
@@ -795,7 +807,7 @@ function M.execute_mysql(connection, query, query_bufnr)
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
           parsed_result = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed_result)
+          formatted_lines, metadata.result_rows = formatter.format(parsed_result)
           -- Add parsed result to metadata for JSON detection
           metadata.parsed_result = parsed_result
         end
@@ -905,7 +917,7 @@ function M.execute_postgres(connection, query, query_bufnr)
           local parser = require("enhance.parser")
           local formatter = require("enhance.formatter")
           parsed_result = parser.parse(output_lines, connection.type)
-          formatted_lines = formatter.format(parsed_result)
+          formatted_lines, metadata.result_rows = formatter.format(parsed_result)
           -- Add parsed result to metadata for JSON detection
           metadata.parsed_result = parsed_result
         end
@@ -947,4 +959,3 @@ M._build_sqlcmd_cmd = build_sqlcmd_cmd
 M._parse_batch_error_output = parse_batch_error_output
 
 return M
-

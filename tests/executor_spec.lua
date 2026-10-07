@@ -824,9 +824,51 @@ describe("enhance.executor", function()
     end)
   end)
 
+  it("attaches SQL Server result types to the correct batched result set", function()
+    local adapter = require('enhance.db.sqlserver')
+    local enhance = require('enhance')
+    local previous_format = enhance.config.format_results
+    enhance.config.format_results = true
+    local original_describe, original_jobstart = adapter.describe_columns, vim.fn.jobstart
+    local original_results = package.loaded['enhance.results']
+    local original_notify = vim.notify
+    local callbacks, displayed
+    adapter.describe_columns = function(_, sql, column_count)
+      assert.equals(1, column_count)
+      if sql:find('StartedAt', 1, true) then return { 'date' } end
+      return { 'int' }
+    end
+    vim.fn.jobstart = function(_, opts)
+      callbacks = opts
+      return 1
+    end
+    vim.notify = function() end
+    package.loaded['enhance.results'] = { display = function(_, _, _, metadata)
+      displayed = metadata.result_rows
+    end }
+
+    executor._execute_sqlserver({ type = 'sqlserver', name = 'Test' },
+      'SELECT 42 AS Number; SELECT CAST(GETDATE() AS date) AS StartedAt;')
+    callbacks.on_stdout(nil, {
+      'Number', '------', '42', '(1 row affected)',
+      'StartedAt', '---------', '2026-01-17', '(1 row affected)',
+    })
+    callbacks.on_exit(nil, 0)
+
+    local types = {}
+    for _, row in pairs(displayed) do types[#types + 1] = row.column_types[1] end
+    table.sort(types)
+    assert.are.same({ 'date', 'int' }, types)
+
+    adapter.describe_columns = original_describe
+    vim.fn.jobstart = original_jobstart
+    package.loaded['enhance.results'] = original_results
+    vim.notify = original_notify
+    enhance.config.format_results = previous_format
+  end)
+
   -- Note: execute_single_sqlserver_statement tests require a real SQL Server instance
   -- The function uses vim.v.shell_error which is read-only in test environment
   -- Manual testing will be performed during debatching implementation
   -- Integration tests will be added once debatching is complete
 end)
-

@@ -85,6 +85,15 @@ describe("json_detector", function()
       assert.is_true(json_columns[2])
     end)
 
+    it("ignores SQL Server NULL markers in a mixed JSON column", function()
+      local rows = {
+        { '{"version":"2.1"}' }, { '{"version":"1.5"}' },
+        { 'NULL' }, { 'NULL' }, { 'NULL' }, { 'NULL' },
+      }
+
+      assert.is_true(detector.detect_json_columns({ 'metadata' }, rows)[1])
+    end)
+
     it("should not detect column as JSON if no valid JSON found", function()
       local headers = { "ID", "Name", "Email" }
       local rows = {
@@ -149,4 +158,3 @@ describe("json_detector", function()
     end)
   end)
 end)
-

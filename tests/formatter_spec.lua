@@ -186,6 +186,14 @@ describe("formatter", function()
   end)
 
   describe("format_multiple_statements", function()
+    it("handles a statement with no table headers", function()
+      local lines, _, row_map = formatter.format_multiple_statements({
+        { result_table = { headers = {}, rows = {} }, rows = 0 },
+      })
+
+      assert.are.same({ "No results" }, lines)
+      assert.are.same({}, row_map)
+    end)
     it("should format single SELECT statement", function()
       local statements = {
         {
@@ -503,4 +511,3 @@ describe("formatter", function()
     end)
   end)
 end)
-

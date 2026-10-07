@@ -256,6 +256,24 @@ enhance.nvim uses a standard database URL connection string and a name property 
 7. **Save**: Use `:w` to save query (prompts for filename)
 8. **Manage**: Use explorer to view buffers, saved queries, and tables
 
+### SQL completion
+
+When an Enhance query buffer is connected to SQL Server, it supplies the active
+database to `vim-dadbod-completion`. With `blink.cmp` configured to use the
+`vim_dadbod_completion.blink` provider for SQL buffers, typing suggests tables,
+columns (including aliases), and SQL keywords. The connection stays local to
+each query buffer, so switching queries uses the right database. You can also
+request Dadbod's built-in completion with `Ctrl-x Ctrl-o` in insert mode.
+
+For `blink.cmp`, add the SQL source to your configuration:
+
+```lua
+sources = {
+  per_filetype = { sql = { inherit_defaults = true, 'dadbod' } },
+  providers = { dadbod = { name = 'Dadbod', module = 'vim_dadbod_completion.blink' } },
+}
+```
+
 ### Keymaps
 
 **Explorer:**
@@ -275,7 +293,44 @@ enhance.nvim uses a standard database URL connection string and a name property 
 **Results Buffer:**
 - `q` - Close results window
 - `:w` - Save associated query buffer (smart redirect)
-- Normal scrolling (`j`, `k`, `Ctrl-d`, `Ctrl-u`) - Navigate results
+- `yc` - Copy full cell under cursor (even if its display is truncated)
+- `yr` - Copy full row as tab-separated values (without display truncation)
+- `ys` - Copy the current result set as tab-separated text, including `#` row numbers and headers
+- `gk` - Show any data cell, truncated or not, in a scrollable popup; detected JSON opens the JSON viewer (`q` or `Esc` closes either)
+- `Alt-k` / `Alt-j` - Previous / next result set (wraps at either end)
+- `Alt-h` / `Alt-l` - Previous / next column within the current data row (wraps within the row)
+- `h` / `j` / `k` / `l` - Native cursor movement
+- `Ctrl-d` / `Ctrl-u` - Scroll the results window
+
+**JSON Viewer** (open a JSON result cell with `gj` or `<leader>dj`):
+- `Alt-j` / `Alt-k` - Next / previous JSON row
+- `Alt-h` / `Alt-l` - Previous / next JSON column
+- `Ctrl-n` / `Ctrl-p` and `Ctrl-h` / `Ctrl-l` - Existing row and column navigation
+- `q` / `Esc` - Close the viewer
+
+The JSON viewer title includes the column name and SQL datatype when known,
+and updates as you navigate rows or JSON columns.
+
+These normal-mode mappings are local to results buffers. Copy mappings write to
+Neovim's unnamed register for `p` and the system clipboard for Cmd-V. Place the
+cursor on a data row for `yc` or `yr` (`yc` requires a cell); `ys` works anywhere
+inside a result set, including its header or an empty table. `Alt-j/k` wrap
+between the last and first result sets. `Alt-h/l` wrap from the first/last
+column to the other end of the same row; `Alt-l` enters the first data row
+from the status line. `gk` shows the full value even if its table display is
+truncated. Its title is the column header and, when known, SQL data type;
+its border matches the cell's result color when one is assigned. On a JSON
+cell, `gk` opens the syntax-highlighted JSON viewer instead.
+SQL Server's `sqlcmd` may limit values longer than 4,096 characters before
+Enhance receives them; copying preserves the full value returned by `sqlcmd`.
+
+SQL Server result cells with numeric types use `EnhanceNumberCell` (peach);
+date/time types use `EnhanceDateCell` (mauve). Colors follow the SQL result
+column's actual type, so numeric- or date-looking text in `varchar`/`nvarchar`
+columns stays plain. NULL and detected JSON cells retain their separate
+highlights. When SQL Server cannot describe a query's result types (for example,
+one using a local temporary table), Enhance displays its values without type
+colors. The type lookup runs as an additional `sqlcmd` query for each result set.
 
 ### Features
 
@@ -419,6 +474,8 @@ vim.api.nvim_set_hl(0, 'EnhanceLineNumberAccent', { fg = '#89b4fa' }) -- Light b
 vim.api.nvim_set_hl(0, 'EnhanceCursorLine', { bg = '#2a2b3c' })       -- Subtle background
 vim.api.nvim_set_hl(0, 'EnhanceCursorLineAccent', { bg = '#3f3144' }) -- Purple-tinted (every 5th line)
 vim.api.nvim_set_hl(0, 'EnhanceError', { fg = '#f38ba8', bold = true }) -- Red (error messages)
+vim.api.nvim_set_hl(0, 'EnhanceNumberCell', { fg = '#fab387' })       -- SQL Server numeric values
+vim.api.nvim_set_hl(0, 'EnhanceDateCell', { fg = '#cba6f7' })         -- SQL Server date/time values
 ```
 
 **Customize in your config:**
@@ -633,4 +690,3 @@ Apache 2.0 License
 
 - **vim-dadbod** and **vim-dadbod-ui** by @kristijanhusak for inspiration and connection format
 - **Neovim community** for excellent plugin development resources
-

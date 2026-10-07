@@ -88,6 +88,26 @@ describe('enhance landing page', function()
     assert.is_true(require('enhance.landing').is_landing(explorer.get_current_editor_buffer()))
   end)
 
+  it('uses the same lettering for the splash and both dashboard banners', function()
+    local win = vim.api.nvim_get_current_win()
+    local font = require('enhance.banner_font')
+    local landing = require('enhance.landing')
+    local function expect_banner(buf, name)
+      local expected = font.render(name, vim.api.nvim_win_get_width(win))
+      local actual = vim.api.nvim_buf_get_lines(buf, 1, #expected + 1, false)
+      local padding = name == 'ENHANCE' and (#actual[1] - #expected[1]) or 2
+      for i, line in ipairs(expected) do
+        assert.equals(string.rep(' ', padding) .. line, actual[i])
+      end
+    end
+    expect_banner(landing.show_welcome(win), 'ENHANCE')
+    expect_banner(landing.show_dashboard(win,
+      { name = 'Demo', type = 'sqlite', database = 'demo' }, {}), 'demo')
+    expect_banner(landing.show_table_dashboard(win,
+      { name = 'Demo', type = 'sqlserver' }, 'dbo.Artists', {}, function() end, function() end),
+      'dbo.Artists')
+  end)
+
   it('shows real object counts and table names in responsive panels', function()
     vim.cmd('vsplit')
     local win = vim.api.nvim_get_current_win()

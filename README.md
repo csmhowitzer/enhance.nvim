@@ -304,15 +304,16 @@ enhance.nvim uses a standard database URL connection string and a name property 
 8. **Manage**: Use explorer to view buffers, saved queries, and tables
 
 The welcome page offers `e` to focus the explorer, `n` for a new query after connecting,
-and `?` for help. The connected dashboard spells the database name in its top
-banner (wrapping long names) and keeps these actions beneath it. It shows
-table/view counts, saved query files, persisted temp query files, table names,
+and `?` for help. The connected dashboard spells the database name in the
+same six-row font as the ENHANCE splash logo, wrapping long names between
+letters. Actions appear beneath the banner. It shows table/view counts, saved
+query files, persisted temp query files, table names,
 and connection details. Unsaved in-memory temp buffers are not included in the
 on-disk count. **DATABASE METADATA** groups the overview cards. Database card
 borders and section headings are purple, card titles and labels are blue, and
 chart descriptions use the subtitle's muted italic style. Views are shown as
-unavailable for databases without explorer
-view support. For SQL Server, a seventh overview card shows **Database Data Size**:
+unavailable without explorer view support. For SQL Server, a seventh overview
+card shows **Database Data Size**:
 space used across all database data files (excluding transaction logs), in kB,
 MB, or GB. It loads in the background and shows `Unavailable` if the lookup
 fails. The welcome page is temporary; the dashboard stays hidden when
@@ -344,7 +345,8 @@ are no pins. Scroll the dashboard normally to see cards below the window.
 ### SQL Server table dashboards
 
 Expand any SQL Server table in the explorer and select **Dashboard** to see its
-own overview in the editor pane. Under **TABLE METADATA**, four cards show its
+own overview in the editor pane. Its table name uses the same splash font and
+wraps at letter boundaries in narrow panes. Under **TABLE METADATA**, four cards show its
 estimated row count, non-heap index count, column count, and allocated table
 data size; their descriptions use the same muted italic styling as the dashboard
 subtitle. A full-width **CREATE TABLE** card displays a syntax-highlighted

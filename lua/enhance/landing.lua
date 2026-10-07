@@ -2,14 +2,6 @@
 local M = {}
 local window_options = {}
 local namespace = vim.api.nvim_create_namespace('enhance_landing')
-local logo = {
-  '███████╗███╗   ██╗██╗  ██╗ █████╗ ███╗   ██╗ ██████╗███████╗',
-  '██╔════╝████╗  ██║██║  ██║██╔══██╗████╗  ██║██╔════╝██╔════╝',
-  '█████╗  ██╔██╗ ██║███████║███████║██╔██╗ ██║██║     █████╗  ',
-  '██╔══╝  ██║╚██╗██║██╔══██║██╔══██║██║╚██╗██║██║     ██╔══╝  ',
-  '███████╗██║ ╚████║██║  ██║██║  ██║██║ ╚████║╚██████╗███████╗',
-  '╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚══════╝',
-}
 
 local function fit(text, width)
   text = tostring(text)
@@ -308,8 +300,9 @@ local function render(win, subtitle, details, actions, top, heading, border_grou
   vim.bo[buf].filetype = 'enhance-landing'
 
   local width = vim.api.nvim_win_get_width(win)
-  local banner = top and require('enhance.banner_font').render(heading, width)
-    or (width >= 74 and logo or { 'E N H A N C E' })
+  local font = require('enhance.banner_font')
+  local banner = top and font.render(heading, width)
+    or (width >= 74 and font.render('ENHANCE', width) or { 'E N H A N C E' })
   local content = vim.deepcopy(banner)
   content[#content + 1] = ''
   local subtitle_index, actions_index

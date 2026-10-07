@@ -127,8 +127,9 @@ Configuration options:
     Start Enhance with the explorer (left) and a welcome page (right) when
     the current buffer is empty. Existing files stay open. After connecting,
     the welcome buffer is removed and the connected dashboard spells the
-    database name in its banner (wrapping long names), then shows table/view
-    counts, saved query files, temp query files persisted on disk, table names,
+    database name in the splash logo's six-row font (wrapping long names at
+    letter boundaries), then shows table/view counts, saved query files, temp
+    query files persisted on disk, table names,
     and connection details in panels. Unsaved temp buffers are not counted.
     DATABASE METADATA groups the top cards. Card borders and section headings
     are purple, titles and labels blue, and chart descriptions muted italic.
@@ -156,11 +157,12 @@ Configuration options:
     Missing catalog entries show N/A; no pins means no metadata cards.
     Use normal buffer movement to scroll to cards below the window.
     Under any SQL Server table in the explorer, choose Dashboard to open its
-    table overview. TABLE METADATA has four cards showing estimated rows,
-    indexes, columns, and allocated data size. Descriptions use the subtitle's
-    muted italic styling. The full-width CREATE TABLE card previews a
-    syntax-highlighted catalog script with columns, identity, defaults, and
-    primary key; it is not a complete migration script.
+    table overview. Its table name uses the same six-row splash font, wrapping
+    between letters when needed. TABLE METADATA has four cards showing
+    estimated rows, indexes, columns, and allocated data size. Card descriptions
+    use the subtitle's muted italic styling. The full-width CREATE TABLE card
+    previews a syntax-highlighted catalog script (columns, identity,
+    defaults, and primary key), not a complete migration script.
     The centered italic yc copy hint copies the full script to the system
     clipboard. REFERENCES is a section heading above views, procedures, and
     functions from static SQL Server dependencies and saved .sql queries

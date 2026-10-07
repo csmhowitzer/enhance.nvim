@@ -158,6 +158,34 @@ local function normalize_headers(headers)
   return out
 end
 
+---Split a pipe-delimited line, retaining blank fields (including a leading blank header).
+local function split_pipe(line)
+  local cells = vim.split(line, "|", { plain = true, trimempty = false })
+  for i, cell in ipairs(cells) do cells[i] = vim.trim(cell) end
+  return cells
+end
+
+---A sqlcmd text cell containing a newline spans physical output lines. Collect
+---until the row has the same number of delimiters as the header, keeping the
+---newlines in the original value for the JSON viewer and clipboard exports.
+local function parse_pipe_rows(chunk, start_idx, column_count)
+  local rows, fragments, delimiters = {}, {}, 0
+  for i = start_idx, #chunk do
+    local line = chunk[i]
+    if line:match("^%(%d+ rows? affected%)") then break end
+    if line ~= "" or #fragments > 0 then
+      fragments[#fragments + 1] = line
+      local _, count = line:gsub("|", "")
+      delimiters = delimiters + count
+      if delimiters >= column_count - 1 then
+        rows[#rows + 1] = split_pipe(table.concat(fragments, "\n"))
+        fragments, delimiters = {}, 0
+      end
+    end
+  end
+  return rows
+end
+
 ---Private: parse a single SQL Server result set chunk.
 ---Auto-detects pipe-separated (ID|Name) or space-separated fixed-width format.
 ---@param chunk string[] Lines from start of result set up to (not including) the boundary line
@@ -173,15 +201,8 @@ local function parse_chunk(chunk)
   local separator_line = chunk[sep_idx]
   if header_line:match("|") then
     -- Pipe-separated format
-    for h in header_line:gmatch("[^|]+") do table.insert(headers, vim.trim(h)) end
-    headers = normalize_headers(headers)
-    for i = sep_idx + 1, #chunk do
-      local line = chunk[i]
-      if line:match("^%(%d+ rows? affected%)") or line == "" then break end
-      local row = {}
-      for cell in line:gmatch("[^|]+") do table.insert(row, vim.trim(cell)) end
-      if #row > 0 then table.insert(rows, row) end
-    end
+    headers = normalize_headers(split_pipe(header_line))
+    rows = parse_pipe_rows(chunk, sep_idx + 1, #headers)
   else
     -- Fixed-width space-separated format
     local col_pos, sp = {}, 1

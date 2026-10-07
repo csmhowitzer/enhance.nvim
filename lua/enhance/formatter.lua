@@ -22,6 +22,12 @@ local default_config = {
   header_separator_char = "-",
 }
 
+---Keep physical result rows on one screen line; retain raw values in row_map.
+local function display_value(value)
+  return tostring(value):gsub("\r\n", "\\n"):gsub("\n", "\\n")
+    :gsub("\r", "\\r"):gsub("\t", "\\t")
+end
+
 ---Calculate optimal column widths based on data
 ---@param headers string[] Column headers
 ---@param rows string[][] Data rows
@@ -39,7 +45,7 @@ local function calculate_column_widths(headers, rows, config)
   for _, row in ipairs(rows) do
     for i, cell in ipairs(row) do
       if widths[i] then
-        local cell_width = #tostring(cell)
+        local cell_width = #display_value(cell)
         if cell_width > widths[i] then
           widths[i] = cell_width
         end
@@ -107,7 +113,7 @@ local function format_row(row, widths, config)
     end
 
     -- Truncate if needed
-    local truncated = truncate_value(tostring(value), width, config.truncate_indicator)
+  local truncated = truncate_value(display_value(value), width, config.truncate_indicator)
 
     -- Pad to width
     local padded = pad_value(truncated, width)

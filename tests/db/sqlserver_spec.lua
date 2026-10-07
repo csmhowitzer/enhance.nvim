@@ -328,6 +328,36 @@ describe("enhance.db.sqlserver parse output", function()
     assert.is_true(require('enhance.json_detector').detect_json_columns(result.headers, result.rows)[2])
   end)
 
+  it("keeps a newline-containing JSON cell in one SQL Server record", function()
+    local lines = {
+      "QueuedWorkflowId|JsonPayload|JsonResults|TrackerId|Type|Updated",
+      "----------------|-----------|-----------|---------|----|-------",
+      '1|{"leadId":27155}|{',
+      '"stop": "Lead 27155 failed to become a contact or already exists"',
+      '}|0|Default|2026-04-13 16:04:36.3200000',
+      '(1 rows affected)',
+    }
+    local result = parser.parse(lines, adapter.grammar)
+    assert.equals(1, #result.rows)
+    assert.are.same({
+      '1', '{"leadId":27155}',
+      '{\n"stop": "Lead 27155 failed to become a contact or already exists"\n}',
+      '0', 'Default', '2026-04-13 16:04:36.3200000',
+    }, result.rows[1])
+
+    local formatted, row_map = require('enhance.formatter').format(result)
+    assert.equals(3, #formatted)
+    assert.is_not_nil(formatted[3]:find('\\n', 1, true))
+    assert.equals(result.rows[1][3], row_map[3].values[3])
+  end)
+
+  it("retains empty fields without shifting subsequent SQL Server columns", function()
+    local result = parser.parse({
+      'id|payload|status', '--|-------|------', '1||done', '(1 rows affected)',
+    }, adapter.grammar)
+    assert.are.same({ '1', '', 'done' }, result.rows[1])
+  end)
+
   it("detects multiple result sets via '(X rows affected)' markers", function()
     local lines = {
       "id|name", "--|----", "1|Alice", "2|Bob", "(2 rows affected)", "",

@@ -30,12 +30,58 @@ A pure Lua database interface for Neovim with intelligent result formatting and 
 
 enhance.nvim uses database CLI tools for query execution. Install the tools for your databases:
 
-| Database | CLI Tool | Installation |
-|----------|----------|--------------|
-| **SQLite** | `sqlite3` | `brew install sqlite3` (macOS)<br>`apt install sqlite3` (Linux) |
-| **SQL Server** | `sqlcmd` | `brew install sqlcmd` (macOS)<br>[Microsoft Docs](https://learn.microsoft.com/en-us/sql/tools/sqlcmd/sqlcmd-utility) (Windows/Linux) |
-| **MySQL** | `mysql` | `brew install mysql-client` (macOS)<br>`apt install mysql-client` (Linux) |
-| **PostgreSQL** | `psql` | `brew install postgresql` (macOS)<br>`apt install postgresql-client` (Linux) |
+| Database | CLI Tool |
+|----------|----------|
+| **SQLite** | `sqlite3` |
+| **SQL Server** | `sqlcmd` |
+| **MySQL** | `mysql` |
+| **PostgreSQL** | `psql` |
+
+**SQLite** — macOS:
+
+```sh
+brew install sqlite3
+```
+
+Linux:
+
+```sh
+apt install sqlite3
+```
+
+**SQL Server** — macOS:
+
+```sh
+brew install sqlcmd
+```
+
+For Windows or Linux, see [Microsoft's sqlcmd installation guide](https://learn.microsoft.com/en-us/sql/tools/sqlcmd/sqlcmd-utility).
+
+**MySQL** — macOS:
+
+```sh
+brew install mysql-client
+```
+
+Linux:
+
+```sh
+apt install mysql-client
+```
+
+**PostgreSQL** — macOS:
+
+```sh
+brew install postgresql
+```
+
+Linux:
+
+```sh
+apt install postgresql-client
+```
+
+Install only the tools for databases you use.
 
 Run `:checkhealth enhance` to verify CLI tools and *vim-dadbod* are installed
 
@@ -532,8 +578,9 @@ require("enhance").setup({
 
 ### Basic SQLite Workflow
 
-```bash
-# 1. Create connections file
+Create the connections file:
+
+```sh
 mkdir -p ~/.local/share/enhance
 cat > ~/.local/share/enhance/connections.json << 'EOF'
 [
@@ -543,23 +590,24 @@ cat > ~/.local/share/enhance/connections.json << 'EOF'
   }
 ]
 EOF
+```
 
-# 2. Configure plugin (in your Neovim config)
+Configure the plugin in your Neovim config:
+
+```lua
 require("enhance").setup({
   enabled = true,
 })
-
-# 3. Start workspace
-:EnhanceStart
-
-# 4. Expand connection in explorer (press <CR>)
-# 5. Create new query (press o on "New Query")
-# 6. Write query:
-SELECT * FROM users WHERE active = 1;
-
-# 7. Execute (press <F5>)
-# 8. Save query (press :w, enter filename "active_users")
 ```
+
+Run `:EnhanceStart`, expand the connection with `<CR>`, then press `o` on
+"New Query". Enter a query such as:
+
+```sql
+SELECT * FROM users WHERE active = 1;
+```
+
+Press `<F5>` to execute, then `:w` to save it as `active_users`.
 
 ### Multiple Database Connections
 
@@ -621,7 +669,12 @@ EOF
 **Problem**: Explorer shows empty connection list
 
 **Solution**:
-1. Verify connections file exists: `cat ~/.local/share/enhance/connections.json`
+1. Verify the connections file exists:
+
+   ```sh
+   cat ~/.local/share/enhance/connections.json
+   ```
+
 2. Check JSON syntax is valid (use `jq` or online validator)
 3. Run `:messages` to see error details
 4. Verify file path in config matches actual file location
@@ -632,12 +685,37 @@ EOF
 
 **Solution**:
 1. Check `:checkhealth enhance` for connection issues
-2. Verify database file exists (for SQLite): `ls -la /path/to/db.db`
-3. Test connection manually:
-   - SQLite: `sqlite3 /path/to/db.db "SELECT 1;"`
-   - SQL Server: `sqlcmd -S server -d database -U user -P password -Q "SELECT 1;"`
-   - MySQL: `mysql -h host -u user -ppassword database -e "SELECT 1;"`
-   - PostgreSQL: `psql "host=host dbname=database user=user password=password" -c "SELECT 1;"`
+2. Verify the database file exists (for SQLite):
+
+   ```sh
+   ls -la /path/to/db.db
+   ```
+
+3. Test the connection manually using the appropriate CLI tool:
+
+   **SQLite:**
+
+   ```sh
+   sqlite3 /path/to/db.db "SELECT 1;"
+   ```
+
+   **SQL Server:**
+
+   ```sh
+   sqlcmd -S server -d database -U user -P password -Q "SELECT 1;"
+   ```
+
+   **MySQL:**
+
+   ```sh
+   mysql -h host -u user -ppassword database -e "SELECT 1;"
+   ```
+
+   **PostgreSQL:**
+
+   ```sh
+   psql "host=host dbname=database user=user password=password" -c "SELECT 1;"
+   ```
 4. Check query syntax in database-specific tool first
 
 ### SQL Server certificate errors

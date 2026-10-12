@@ -117,7 +117,7 @@ describe("statement_detector", function()
     end)
 
     describe("newline-separated statements (SQL Server style)", function()
-      it("should detect two SELECT statements without semicolons", function()
+      it("should preserve undelimited SELECT statements as one batch", function()
         local query = [[
 SELECT * FROM Users
 
@@ -125,12 +125,12 @@ SELECT * FROM Products
 ]]
         local statements = detector.detect_statements(query)
 
-        assert.equals(2, #statements)
+        assert.equals(1, #statements)
         assert.equals("SELECT", statements[1].type)
-        assert.equals("SELECT", statements[2].type)
+        assert.equals(vim.trim(query), statements[1].text)
       end)
 
-      it("should detect mixed statements without semicolons", function()
+      it("should preserve undelimited mixed SQL instead of guessing boundaries", function()
         local query = [[
 INSERT INTO Users VALUES (1, 'Alice')
 
@@ -138,9 +138,9 @@ SELECT * FROM Users
 ]]
         local statements = detector.detect_statements(query)
 
-        assert.equals(2, #statements)
+        assert.equals(1, #statements)
         assert.equals("INSERT", statements[1].type)
-        assert.equals("SELECT", statements[2].type)
+        assert.equals(vim.trim(query), statements[1].text)
       end)
     end)
 
@@ -210,9 +210,9 @@ SELECT * FROM Products
 ]]
         local statements = detector.detect_statements(query)
 
-        assert.equals(2, #statements)
+        assert.equals(1, #statements)
         assert.equals("SELECT", statements[1].type)
-        assert.equals("SELECT", statements[2].type)
+        assert.equals(vim.trim(query), statements[1].text)
       end)
 
       it("should handle case-insensitive keywords", function()
@@ -318,4 +318,3 @@ SELECT * FROM Products
     end)
   end)
 end)
-

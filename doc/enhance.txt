@@ -39,30 +39,16 @@ Using lazy.nvim:
 
 >lua
     {
-      "kristijanhusak/vim-dadbod",  -- required
-      "kristijanhusak/vim-dadbod-completion",  -- optional
       "csmhowitzer/enhance.nvim",
+      dependencies = {
+        "kristijanhusak/vim-dadbod",  -- required
+        "kristijanhusak/vim-dadbod-completion",  -- optional
+      },
       config = function()
         require("enhance").setup({
           enabled = true,
           -- connections_file is optional - defaults to:
           -- ~/.local/share/enhance/connections.json
-        })
-      end,
-    }
-<
-
-For local development:
-
->lua
-    {
-      dir = "~/plugins/enhance.nvim",
-      name = "enhance",
-      build = ":helptags doc",
-      config = function()
-        require("enhance").setup({
-          enabled = true,
-          connections_file = "~/.local/share/enhance/connections.json",
         })
       end,
     }
@@ -84,6 +70,48 @@ Create connections file at `~/.local/share/enhance/connections.json`:
 <
 
 See |enhance-database-types| for connection URL formats.
+
+Structured helper packaging                               *enhance-helper*
+
+SQL Server and MySQL/MariaDB use the bundled .NET helper; PostgreSQL uses a
+bundled Go companion. Neither uses a CLI-text fallback. No binary release is
+pinned yet: queries fail until their release is published/pinned and installed.
+CLIs remain required for probes, completion and explorer metadata. SQLite is unchanged.
+
+When a pinned release is available, lazy.nvim discovers build.lua automatically
+on installation/update. End-users do not install .NET/Go, compile helpers, change
+PATH, or configure a helper path. Installation needs HTTPS access and curl, plus
+shasum (macOS), sha256sum (Linux), or Get-FileHash (Windows PowerShell). Runtime OS
+libraries and authentication prerequisites still apply.
+
+Ubuntu 24.04 (including WSL2) uses the Linux x64 or ARM64 helper, selected
+automatically. On a minimal installation, standard OS prerequisites are:
+>sh
+sudo apt update
+sudo apt install curl ca-certificates libicu74 libssl3t64 libgssapi-krb5-2
+<
+These are Ubuntu libraries/utilities, not .NET/Go SDKs or runtimes. ICU must
+be available even if the helper's version handshake succeeds. The plugin
+never invokes apt or sudo. Database CLIs are still needed for probes,
+completion and explorer metadata. Public releases remain unpublished.
+
+The exact release and checksums are shipped with the plugin. The verified helper
+is stored under stdpath('data')/enhance/helper, not the plugin checkout. Queries,
+health checks, and helper path lookup never download executables.
+
+Use :checkhealth enhance to inspect packaging state. If a published helper is
+missing or corrupt, rebuild enhance.nvim in lazy.nvim. After an interrupted
+install, an error may identify a stale lock directory; confirm no installer is
+running before removing only that lock directory and retrying.
+
+MySQL/PostgreSQL {ssl_mode}: disable, prefer (default), require, verify-ca,
+verify-full. Prefer may use plaintext; choose verify-full for authenticated TLS.
+PostgreSQL requires an explicit user/username and does not inherit PG environment,
+service or password files. Custom certificate files/GSS are not exposed yet.
+Server SQL only: mysql DELIMITER/source, psql backslash commands, and PostgreSQL
+COPY STDIN/STDOUT/replication streams are unsupported. COPY protocol fails explicitly.
+No SQL rewriting, extra query session, automatic retry, or CLI-text fallback is used
+by Enhance. Connections last one execution; cross-execution state is not retained.
 
 ==============================================================================
 3. CONFIGURATION                                      *enhance-configuration*
@@ -371,15 +399,23 @@ SQL Server                                               *enhance-sqlserver*
     }
 <
 
-Requires: `sqlcmd` CLI tool
+Requires: verified structured helper for queries; `sqlcmd` for connection probes
+and explorer/catalog operations. See |enhance-helper| for current release status.
+
+Queries execute unchanged in one command/connection, never separate-connection
+debatching. Server SQL only: GO, SQLCMD directives/variables, and script includes
+are unsupported, with no rewrite or text fallback. Native SQL Server error and
+transaction semantics apply. Process cancellation does not establish rollback.
+Returned table rows and aggregate affected counts are separate; timing is total,
+not per-statement attribution. SQL Server uses structured rendering even if the
+legacy format_results option is false. TLS validates certificates by default;
+only explicit trust_server_certificate=true opts out.
 
 SQL Server result values with numeric column types use `EnhanceNumberCell`;
 date/time types use `EnhanceDateCell`. These colors follow result-column SQL
 types, not the appearance of their text: `varchar`/`nvarchar` dates and numbers
-remain plain. NULL and detected JSON retain their own highlights. Enhance
-requests type metadata with an additional `sqlcmd` query per result set; if
-the query cannot be described (for example, it references a local temporary
-table), values simply remain uncolored by type.
+remain plain. NULL and detected JSON retain their own highlights. Result-column
+types come directly from the executing driver; no extra describe query is run.
 Press <leader>dh to show or hide datatype labels beneath each result header.
 Labels follow their column's color and are available for empty tables when
 SQL Server returns type metadata. The cell popup pads short values on all sides.

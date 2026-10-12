@@ -92,16 +92,19 @@ end
 local function parse_chunk(chunk)
   if not chunk or #chunk == 0 then return { headers = {}, rows = {} } end
   local headers, rows = {}, {}
-  local is_tsv = chunk[1]:match("\t") and not chunk[1]:match("^%+")
+  local first_nonblank = chunk[1]
+  for _, line in ipairs(chunk) do
+    if line ~= '' then first_nonblank = line; break end
+  end
+  local is_tsv = not first_nonblank:match('^%+') and not first_nonblank:match('^|')
   if is_tsv then
-    for h in chunk[1]:gmatch("[^\t]+") do table.insert(headers, vim.trim(h)) end
+    headers = vim.split(chunk[1], '\t', { plain = true, trimempty = false })
     headers = normalize_headers(headers)
     for i = 2, #chunk do
       local line = chunk[i]
       if line:match("rows? in set") or line:match("rows? affected") then break end
-      local row = {}
-      for cell in line:gmatch("[^\t]+") do table.insert(row, vim.trim(cell)) end
-      if #row > 0 then table.insert(rows, row) end
+      -- TSV is not padded; trimming would change actual text values.
+      table.insert(rows, vim.split(line, '\t', { plain = true, trimempty = false }))
     end
   else
     -- ASCII table: first pipe-row (not a border) is the header
@@ -110,18 +113,16 @@ local function parse_chunk(chunk)
       if line:match("^|") and not line:match("^%+") then header_idx = i; break end
     end
     if header_idx then
-      for h in chunk[header_idx]:gmatch("[^|]+") do table.insert(headers, vim.trim(h)) end
+      headers = vim.split(chunk[header_idx]:sub(2, -2), '|', { plain = true, trimempty = false })
+      for i, h in ipairs(headers) do headers[i] = vim.trim(h) end
       headers = normalize_headers(headers)
       for i = header_idx + 1, #chunk do
         local line = chunk[i]
         if line:match("rows? in set") or line:match("rows? affected") then break end
         if line:match("^|") and not line:match("^%+") then
-          local row = {}
-          for cell in line:gmatch("[^|]+") do
-            local t = vim.trim(cell)
-            if t ~= "" then table.insert(row, t) end
-          end
-          if #row > 0 then table.insert(rows, row) end
+          local row = vim.split(line:sub(2, -2), '|', { plain = true, trimempty = false })
+          for index, cell in ipairs(row) do row[index] = vim.trim(cell) end
+          table.insert(rows, row)
         end
       end
     end
@@ -149,28 +150,7 @@ M.grammar = {
 ---@return number duration  milliseconds
 ---@return number row_count
 function M.execute_single(connection, statement_text)
-  local start_time = vim.loop.hrtime()
-  local cmd = M.build_cmd(connection, { query = statement_text })
-
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
-  local duration = (vim.loop.hrtime() - start_time) / 1000000
-
-  if exit_code ~= 0 then
-    return nil, output, duration, 0
-  end
-
-  local output_lines = {}
-  for line in output:gmatch("[^\r\n]+") do
-    if line ~= "" and not line:match("^mysql: %[Warning%]") then
-      table.insert(output_lines, line)
-    end
-  end
-
-  local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, M.grammar)
-
-  return parsed_result, nil, duration, #(parsed_result and parsed_result.rows or {})
+  return require('enhance.db.helper_sync').execute('mysql', connection, statement_text)
 end
 
 -- Expose internals for testing (M._function_name pattern)
@@ -181,4 +161,3 @@ M._test_connection = M.test_connection
 M._execute_single  = M.execute_single
 
 return M
-

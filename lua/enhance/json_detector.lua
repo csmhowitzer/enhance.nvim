@@ -8,8 +8,9 @@ local json_utils = require("enhance.json_utils")
 ---@param headers string[] Column headers
 ---@param rows string[][] Data rows
 ---@param sample_size? number Number of rows to sample (default: 5)
+---@param explicit_nulls boolean? True for structured results; literal NULL/empty text are values
 ---@return table<number, boolean> Map of column_index -> is_json_column
-function M.detect_json_columns(headers, rows, sample_size)
+function M.detect_json_columns(headers, rows, sample_size, explicit_nulls)
   sample_size = sample_size or 5
   
   -- Initialize result map (all columns default to false)
@@ -38,7 +39,7 @@ function M.detect_json_columns(headers, rows, sample_size)
 
       -- SQL CLI output represents database NULL as the literal "NULL".
       -- Neither it nor empty cells disqualify an otherwise JSON column.
-      if cell and cell ~= "" and cell ~= "NULL" then
+      if cell ~= nil and cell ~= vim.NIL and (explicit_nulls or (cell ~= "" and cell ~= "NULL")) then
         has_non_null = true
 
         -- Check if this cell contains valid JSON

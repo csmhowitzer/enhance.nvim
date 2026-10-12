@@ -62,7 +62,7 @@ function M.has_error(_output_lines)
 end
 
 ---Test a PostgreSQL connection by running a probe query.
----Manages PGPASSWORD env var for the duration of the call.
+---Uses the verified structured helper; credentials stay in stdin.
 ---@param connection table PostgreSQL connection
 ---@return boolean success
 ---@return string? error_msg
@@ -110,7 +110,8 @@ local function parse_chunk(chunk)
   if not sep_idx or sep_idx <= 1 then return { headers = headers, rows = rows } end
   local header_line = chunk[sep_idx - 1]
   if header_line:match("|") then
-    for h in header_line:gmatch("[^|]+") do table.insert(headers, vim.trim(h)) end
+    headers = vim.split(header_line, '|', { plain = true, trimempty = false })
+    for i, h in ipairs(headers) do headers[i] = vim.trim(h) end
   else
     table.insert(headers, vim.trim(header_line))
   end
@@ -119,15 +120,12 @@ local function parse_chunk(chunk)
     local line = chunk[i]
     if line:match("^%(.*rows?%)") or line:match("^[A-Z]+%s+%d+%s+%d+") then break end
     if line:match("|") then
-      local row = {}
-      for cell in line:gmatch("[^|]+") do
-        local t = vim.trim(cell)
-        if t ~= "" then table.insert(row, t) end
-      end
-      if #row > 0 then table.insert(rows, row) end
+      local row = vim.split(line, '|', { plain = true, trimempty = false })
+      for index, cell in ipairs(row) do row[index] = vim.trim(cell) end
+      table.insert(rows, row)
     else
       local t = vim.trim(line)
-      if t ~= "" then table.insert(rows, { t }) end
+      table.insert(rows, { t })
     end
   end
   return { headers = headers, rows = rows }
@@ -155,36 +153,7 @@ M.grammar = {
 ---@return number duration  milliseconds
 ---@return number row_count
 function M.execute_single(connection, statement_text)
-  local start_time = vim.loop.hrtime()
-
-  if connection.password then
-    vim.fn.setenv("PGPASSWORD", connection.password)
-  end
-
-  local cmd = M.build_cmd(connection, { query = statement_text })
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
-  local duration = (vim.loop.hrtime() - start_time) / 1000000
-
-  if connection.password then
-    vim.fn.setenv("PGPASSWORD", nil)
-  end
-
-  if exit_code ~= 0 then
-    return nil, output, duration, 0
-  end
-
-  local output_lines = {}
-  for line in output:gmatch("[^\r\n]+") do
-    if line ~= "" then
-      table.insert(output_lines, line)
-    end
-  end
-
-  local parser = require("enhance.parser")
-  local parsed_result = parser.parse(output_lines, M.grammar)
-
-  return parsed_result, nil, duration, #(parsed_result and parsed_result.rows or {})
+  return require('enhance.db.helper_sync').execute('postgresql', connection, statement_text)
 end
 
 -- Expose internals for testing (M._function_name pattern)
@@ -195,4 +164,3 @@ M._test_connection = M.test_connection
 M._execute_single  = M.execute_single
 
 return M
-

@@ -10,6 +10,20 @@ local function check_command(cmd)
   return vim.fn.executable(cmd) == 1
 end
 
+---Report helper packaging state without installing anything or accessing the network.
+local function check_helper(db)
+  local postgres = db == 'postgresql'
+  local label = postgres and 'PostgreSQL' or 'SQL Server'
+  local path, err = require('enhance.helper_install').path(db)
+  if path then
+    vim.health.ok('Verified ' .. label .. ' helper: ' .. path .. (postgres and '' or ' (also executes MySQL/MariaDB)'))
+  elseif err and err:match('not published') then
+    vim.health.warn(err .. '; ' .. label .. ' queries unavailable until a pinned helper release is installed')
+  else
+    vim.health.warn(err or label .. ' helper unavailable')
+  end
+end
+
 ---Main health check function
 function M.check()
   vim.health.start("enhance.nvim")
@@ -91,6 +105,12 @@ function M.check()
     })
   end
   
+  -- Helper installation diagnostics (no downloads).
+  vim.health.start('Structured Helper Packaging')
+  check_helper()
+  check_helper('postgresql')
+  vim.health.info('SQL Server/MySQL/PostgreSQL queries use structured helpers; probes, completion and explorer metadata still require their CLIs')
+
   -- Check connections
   vim.health.start("Connections")
   
@@ -139,5 +159,5 @@ function M.check()
   end
 end
 
+M._check_helper = check_helper
 return M
-

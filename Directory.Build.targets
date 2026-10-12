@@ -1,0 +1,7 @@
+<Project>
+  <!-- Apply to the helper and its project references together. Keep the existing
+       developer target unless a maintainer explicitly selects the release LTS. -->
+  <PropertyGroup Condition="'$(EnhanceReleaseTargetFramework)' != ''">
+    <TargetFramework>$(EnhanceReleaseTargetFramework)</TargetFramework>
+  </PropertyGroup>
+</Project>

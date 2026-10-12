@@ -1,5 +1,14 @@
 # enhance.nvim Roadmap
 
+## Implemented Baseline (2026-10-09)
+- Full-cell viewing (`gk`), JSON viewer routing, and full cell/row/result-set copying (`yc`/`yr`/`ys`)
+- Result-set/column navigation and SQL Server datatype labels/colors
+- Database overview dashboards, refresh, and persistent table pins
+- SQL Server catalog charts, size metrics, pinned-table details, and table dashboards with schema previews and references
+- SQL completion integration with vim-dadbod-completion and blink.cmp
+- Automated verification: **459 passing, 0 failing** with `nvt`; live-database regression scenarios were not rerun for this snapshot
+- Entries below describe remaining enhancements, not confirmed release contents or newly assigned priorities
+
 ## For v1.0.0 (Stable Release)
 
 ### Beta Feedback
@@ -20,14 +29,10 @@
 - SQLite regression testing (verify no regressions from SQL Server work)
 
 ### Enhanced Results
-- **Truncated column viewing** - Expandable view for long text/JSON columns
-  - Horizontal scrolling or column width adjustment
-  - Popup/floating window for full content
-  - Smart truncation with visual indicators
-- JSON field handling with expandable view
 - Adjustable column widths
 - Column sorting
 - Result filtering
+- Results-buffer refresh (the `r` mapping is currently a placeholder)
 
 ## Future Considerations
 
@@ -41,6 +46,7 @@
 - Notebook file persistence
 
 ### Database Landing Dashboard
+- The core dashboard, manual refresh, persistent pins, and SQL Server catalog metrics/table dashboards are implemented. The following list preserves design direction; automatic write invalidation/refresh and query-history charts remain planned.
 - Visual direction: SQL Studio-style overview in the editor pane beside Enhance's explorer — connection/database heading, compact metric cards, chart panels, and a metadata panel; adapt to terminal width and Neovim highlight groups rather than copying browser chrome
 - Candidate cards: tables, views, indexes, triggers (only show supported, real catalog values for each database)
 - Candidate charts: top tables by row count and indexes/columns per table; label estimates clearly and never run unbounded exact counts on startup

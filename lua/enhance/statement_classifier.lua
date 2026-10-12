@@ -66,7 +66,19 @@ function M.classify_for_execution(statements)
       },
     }
   end
-  
+  -- Unknown/session-affecting syntax must never be separated into fresh CLI sessions.
+  local lexer = require('enhance.sql_lexer')
+  for _, stmt in ipairs(statements) do
+    local code = lexer.code(stmt.text):upper()
+    if stmt.requires_batch or stmt.type == 'UNKNOWN' or code:match('%f[%w]TEMP%f[%W]')
+      or code:match('%f[%w]TEMPORARY%f[%W]') or code:find('#', 1, true) then
+      return {
+        execution_mode = 'batch', reason = 'session_or_unknown',
+        groups = { { type = 'batch', statements = statements } },
+      }
+    end
+  end
+
   -- Check if all statements should be batched (metadata queries)
   local all_batch = true
   for _, stmt in ipairs(statements) do
@@ -162,4 +174,3 @@ M._should_debatch = should_debatch
 M._should_batch = should_batch
 
 return M
-

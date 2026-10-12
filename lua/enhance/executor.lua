@@ -75,14 +75,6 @@ local function count_rows(output_lines, db_type)
   return row_count
 end
 
----Build a sqlcmd command array (delegates to sqlserver adapter)
----@param connection table SQL Server connection
----@param opts table SqlcmdOptions
----@return string[] Command array
-local function build_sqlcmd_cmd(connection, opts)
-  return sqlserver_adapter.build_cmd(connection, opts)
-end
-
 ---Test database connection
 ---@param connection table Database connection
 ---@return boolean success True if connection successful
@@ -165,7 +157,8 @@ local function make_statement_result(stmt, connection, duration, row_count, pars
 
   result.rows = row_count
 
-  if stmt.type == "SELECT" or stmt.type == "UNKNOWN" then
+  if stmt.type == "SELECT" or stmt.type == "UNKNOWN" or stmt.type == 'PRAGMA'
+    or stmt.type == 'SHOW' or stmt.type == 'DESCRIBE' or stmt.type == 'EXPLAIN' then
     result.result_table = {
       headers = parsed_result and parsed_result.headers or {},
       rows    = parsed_result and parsed_result.rows    or {},
@@ -207,17 +200,26 @@ local function execute_debatch(connection, groups, query_bufnr, execute_single_f
   local had_error = false
 
   for _, group in ipairs(groups) do
-    for _, stmt in ipairs(group.statements) do
-      local parsed_result, err, duration, row_count = execute_single_fn(connection, stmt.text)
-      total_duration = total_duration + duration
-
+    local texts = {}
+    for _, stmt in ipairs(group.statements) do texts[#texts + 1] = stmt.text end
+    -- Put separators on their own lines so a trailing -- comment cannot swallow them.
+    local sql = table.concat(texts, '\n;\n')
+    local parsed_result, err, duration, row_count = execute_single_fn(connection, sql)
+    total_duration = total_duration + duration
+    if group.type == 'batch' and not err then
+      local tables = parsed_result and parsed_result.result_sets or {}
+      if #tables == 0 and parsed_result and parsed_result.headers then tables = { parsed_result } end
+      for index, result_table in ipairs(tables) do
+        local stmt = group.statements[index] or { type = 'SELECT', text = sql }
+        table.insert(all_statement_results,
+          make_statement_result(stmt, connection, index == 1 and duration or 0,
+            #result_table.rows, result_table, nil))
+      end
+    else
+      local stmt = group.statements[1]
       local result = make_statement_result(stmt, connection, duration, row_count, parsed_result, err)
       table.insert(all_statement_results, result)
-
-      if err then
-        had_error = true
-        break
-      end
+      if err then had_error = true end
     end
 
     if had_error then break end
@@ -471,479 +473,102 @@ function M.execute_sqlite(connection, query, query_bufnr)
   })
 end
 
----Execute a single SQL Server statement (delegates to sqlserver adapter)
----@param connection table SQL Server connection
----@param statement_text string Single SQL statement
----@return table|nil parsed_result
----@return string|nil error_msg
----@return number duration milliseconds
----@return number row_count
-local function execute_single_sqlserver_statement(connection, statement_text)
-  return sqlserver_adapter.execute_single(connection, statement_text)
-end
-
----Execute SQL Server statements individually (de-batched)
----@param connection table SQL Server connection
----@param groups table[] Execution groups from classifier
----@param query_bufnr number? Optional query buffer number
-local function execute_debatch_sqlserver(connection, groups, query_bufnr)
-  execute_debatch(connection, groups, query_bufnr, M._execute_single_sqlserver_statement)
-end
-
----Parse SQL Server batch output that contains errors and display results
----Separates any successful result sets that appeared before the error.
----@param output_lines string[] Raw output lines from sqlcmd
----@param query string Original SQL query (used for query_text on pure-error results)
----@param connection table SQL Server connection
----@param duration number Total execution time in milliseconds
----@param query_bufnr number? Optional query buffer number
-local function parse_batch_error_output(output_lines, query, connection, duration, query_bufnr)
-  -- Collect the error message block (everything from the first "Msg X, Level Y" onward)
-  local error_lines_text = {}
-  local in_error = false
-  for _, line in ipairs(output_lines) do
-    if line:match("Msg %d+, Level %d+") then in_error = true end
-    if in_error then table.insert(error_lines_text, line) end
-  end
-
-  -- Parse full output — may contain partial result sets before the error
-  local parsed_result = require("enhance.parser").parse(output_lines, connection.type)
-
-  -- Normalise to multiple_results format for consistent processing
-  local has_successful_results = false
-  if parsed_result and parsed_result.multiple_results and #parsed_result.result_sets > 0 then
-    has_successful_results = true
-  elseif parsed_result and parsed_result.headers and #parsed_result.headers > 0
-      and parsed_result.rows and #parsed_result.rows > 0 then
-    has_successful_results = true
-    parsed_result = {
-      multiple_results = true,
-      result_sets = { { headers = parsed_result.headers, rows = parsed_result.rows,
-                         metadata = parsed_result.metadata or {} } },
-      metadata = parsed_result.metadata or { db_type = connection.type },
-    }
-  end
-
-  local all_statement_results = {}
-
-  if has_successful_results then
-    -- One synthetic result object per successful result set
-    for _, result_set in ipairs(parsed_result.result_sets) do
-      table.insert(all_statement_results, {
-        type        = "SELECT",
-        query_text  = "",
-        rows        = #result_set.rows,
-        elapsed     = 0,  -- batch mode: no per-statement timing
-        db_type     = connection.type,
-        db_name     = connection.database or connection.name,
-        executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-        result_table = { headers = result_set.headers, rows = result_set.rows },
-      })
+local sqlserver_queries = {}
+local sqlserver_group = vim.api.nvim_create_augroup('EnhanceSQLServerQueries', { clear = true })
+vim.api.nvim_create_autocmd({ 'BufWipeout', 'VimLeavePre' }, {
+  group = sqlserver_group,
+  callback = function(event)
+    for key, state in pairs(sqlserver_queries) do
+      if event.event == 'VimLeavePre' or key == event.buf then
+        sqlserver_queries[key] = nil
+        state.runner:cancel()
+      end
     end
-  end
+  end,
+})
 
-  -- Append the error result
-  table.insert(all_statement_results, {
-    type        = "SELECT",
-    query_text  = has_successful_results and "" or query,
-    rows        = 0,
-    elapsed     = has_successful_results and 0 or duration,
-    db_type     = connection.type,
-    db_name     = connection.database or connection.name,
-    executed_on = os.date("%Y-%m-%d %H:%M:%S"),
-    result_table = nil,
-    message     = "ERROR: " .. table.concat(error_lines_text, "\n"),
-    error       = true,
-  })
-
-  local formatter = require("enhance.formatter")
-  local formatted_lines, total_table_rows, result_rows = formatter.format_multiple_statements(all_statement_results)
-
-  local metadata = {
-    execution_time    = duration,
-    row_count         = total_table_rows or 0,
-    db_type           = connection.type,
-    timestamp         = os.date("%Y-%m-%d %H:%M:%S"),
-    connection_name   = connection.name,
-    statement_count   = #all_statement_results,
-    total_table_rows  = total_table_rows,
-    is_error          = true,
-    statement_results = all_statement_results,
-    result_rows      = result_rows,
-  }
-
-  vim.notify("Query execution failed", vim.log.levels.ERROR)
-  require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
+---Cancel a SQL Server query owned by a query buffer (or the anonymous owner).
+---@param query_bufnr number?
+---@return boolean
+function M.cancel_query(query_bufnr)
+  local key = query_bufnr or 0
+  local state = sqlserver_queries[key]
+  sqlserver_queries[key] = nil
+  return state ~= nil and state.runner:cancel() or false
 end
+M.cancel_sqlserver = M.cancel_query -- Compatibility alias for the shared query owner.
 
----Execute SQL Server query using sqlcmd CLI
+---Execute unchanged server SQL through the structured helper, never CLI text.
 ---@param connection table SQL Server connection
 ---@param query string SQL query
 ---@param query_bufnr number? Optional query buffer number
-function M.execute_sqlserver(connection, query, query_bufnr)
-  vim.notify("Executing SQL Server query...", vim.log.levels.INFO)
-
-  -- Detect statements BEFORE execution (Phase 1)
-  local statement_detector = require("enhance.statement_detector")
-  local detected_statements = statement_detector.detect_statements(query)
-
-  -- Classify execution strategy (Phase 2)
-  local statement_classifier = require("enhance.statement_classifier")
-  local classification = statement_classifier.classify_for_execution(detected_statements)
-
-  -- Route to appropriate execution path
-  if classification.execution_mode == "debatch" then
-    -- Use new de-batch execution
-    execute_debatch_sqlserver(connection, classification.groups, query_bufnr)
-    return
+local function execute_helper(connection, query, query_bufnr)
+  if query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr) then return end
+  vim.notify('Executing ' .. connection.type .. ' query...', vim.log.levels.INFO)
+  local key = query_bufnr or 0
+  local state = sqlserver_queries[key]
+  if not state then
+    state = { runner = require('enhance.helper_runner').new(), generation = 0 }
+    sqlserver_queries[key] = state
   end
-
-  -- Continue with existing batch execution for batch mode
-  local output_lines = {}
-  local error_lines = {}
-  local start_time = vim.loop.hrtime()
-
-  local cmd = build_sqlcmd_cmd(connection, { query = query })
-
-  vim.fn.jobstart(cmd, {
-    stdout_buffered = true,
-    on_stdout = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" then
-            table.insert(output_lines, line)
-          end
+  state.generation = state.generation + 1
+  local generation = state.generation
+  state.runner:run(connection, query, function(response, err)
+    if sqlserver_queries[key] ~= state or state.generation ~= generation
+      or (query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr)) then return end
+    local metadata = {
+      db_type = connection.type, connection_name = connection.name,
+      timestamp = os.date('%Y-%m-%d %H:%M:%S'), execution_time = 0, row_count = 0,
+      is_error = err ~= nil or not response.ok, transport = 'helper',
+    }
+    local lines
+    if err then
+      lines = { 'Query Execution Failed', err }
+      -- Also replace parsed metadata in a reused results buffer on transport errors.
+      metadata.parsed_result = { headers = {}, rows = {}, metadata = { db_type = connection.type, transport = 'helper' } }
+      metadata.result_rows = {}
+    else
+      metadata.execution_time = response.duration_ms
+      metadata.parsed_result = response.parsed_result
+      metadata.messages, metadata.errors = response.messages, response.errors
+      metadata.affected_rows = response.affected_rows
+      local parsed = response.parsed_result
+      local sets = parsed.multiple_results and parsed.result_sets or { parsed }
+      for _, result in ipairs(sets) do metadata.row_count = metadata.row_count + #result.rows end
+      lines, metadata.result_rows = require('enhance.formatter').format(parsed)
+      if response.affected_rows ~= vim.NIL then
+        lines[#lines + 1] = 'Rows affected: ' .. tostring(response.affected_rows)
+      end
+      for _, message in ipairs(response.messages) do
+        for _, line in ipairs(vim.split(message.message, '\n', { plain = true })) do
+          lines[#lines + 1] = 'Message: ' .. line
         end
       end
-    end,
-    on_stderr = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" then
-            table.insert(error_lines, line)
-          end
+      for _, error in ipairs(response.errors) do
+        local label = 'ERROR: '
+        if type(error.number) == 'number' then label = label .. 'Msg ' .. error.number .. ': ' end
+        if type(error.sqlState) == 'string' then label = label .. '[' .. error.sqlState .. '] ' end
+        for _, line in ipairs(vim.split(error.message, '\n', { plain = true })) do
+          lines[#lines + 1] = label .. line
         end
       end
-    end,
-    on_exit = function(_, exit_code)
-      local end_time = vim.loop.hrtime()
-      local duration = (end_time - start_time) / 1000000
-
-      -- Check for SQL errors in output (sqlcmd returns 0 even for SQL errors)
-      -- SQL Server error format: "Msg 208, Level 16, State 1, ..."
-      local has_sql_error = false
-      for _, line in ipairs(output_lines) do
-        if line:match("Msg %d+, Level %d+") then
-          has_sql_error = true
-          break
-        end
-      end
-
-      if has_sql_error then
-        parse_batch_error_output(output_lines, query, connection, duration, query_bufnr)
-        return
-      end
-
-      if exit_code ~= 0 then
-        -- Display error in results window
-        local error_display = {
-          "Query Execution Failed",
-        }
-
-        if #error_lines > 0 then
-          for _, err_line in ipairs(error_lines) do
-            table.insert(error_display, err_line)
-          end
-        else
-          table.insert(error_display, "Exit code: " .. exit_code)
-        end
-
-        -- Also show notification for immediate feedback
-        vim.notify("Query execution failed", vim.log.levels.ERROR)
-
-        -- Display error in results window
-        require("enhance.results").display_message(error_display, true)
-        return
-      end
-
-      -- Success case
-      if exit_code == 0 then
-        -- Count rows using unified logic
-        local row_count = count_rows(output_lines, connection.type)
-
-        -- Build metadata
-        local metadata = {
-          execution_time = duration,
-          row_count = row_count,
-          db_type = connection.type,
-          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-          connection_name = connection.name,
-        }
-
-        -- Detect SQL statements in the query
-        local statement_detector = require("enhance.statement_detector")
-        local detected_statements = statement_detector.detect_statements(query)
-
-        -- Parse and format results for consistent display (if enabled)
-        local config = require("enhance.config")
-        local formatted_lines = output_lines
-        local parsed_result = nil
-        if config.get("format_results") then
-          local parser = require("enhance.parser")
-          local formatter = require("enhance.formatter")
-
-          -- Phase 2: Parse output (supports multiple result sets)
-          parsed_result = parser.parse(output_lines, connection.type)
-
-          -- Phase 3 & 4: Match statements to output and format
-          if #detected_statements > 0 then
-            local statement_matcher = require("enhance.statement_matcher")
-            local matched_results = statement_matcher.match_statements(
-              detected_statements,
-              parsed_result,
-              metadata
-            )
-            for _, result in ipairs(matched_results) do
-              if result.result_table and #result.result_table.headers > 0 then
-                result.result_table.column_types = sqlserver_adapter.describe_columns(
-                  connection, result.query_text, #result.result_table.headers
-                )
-              end
-            end
-            local total_table_rows
-            formatted_lines, total_table_rows, metadata.result_rows = formatter.format_multiple_statements(matched_results)
-            metadata.statement_results = matched_results
-
-            -- Update metadata for multiple statements
-            -- Use matched_results count (filters out transaction control statements)
-            metadata.statement_count = #matched_results
-            metadata.total_table_rows = total_table_rows
-          else
-            -- Fallback to old format for backward compatibility
-            formatted_lines, metadata.result_rows = formatter.format(parsed_result)
-          end
-
-          -- Add parsed result to metadata for JSON detection
-          metadata.parsed_result = parsed_result
-        end
-
-        -- Display results with metadata (no footer added here)
-        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
-
-        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
-        local query_upper = query:upper():gsub("^%s+", "")
-        if query_upper:match("^CREATE%s+TABLE") or
-           query_upper:match("^DROP%s+TABLE") or
-           query_upper:match("^ALTER%s+TABLE") then
-          -- Refresh explorer to show updated table list
-          vim.schedule(function()
-            local explorer = require("enhance.explorer")
-            if explorer.is_open() then
-              explorer.refresh()
-            end
-          end)
-        end
-      else
-        vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
-      end
-    end,
-  })
+    end
+    if metadata.is_error then vim.notify('Query execution failed', vim.log.levels.ERROR) end
+    require('enhance.results').display(lines, connection, query_bufnr, metadata)
+    local query_upper = query:upper():gsub('^%s+', '')
+    if not metadata.is_error and (query_upper:match('^CREATE%s+TABLE')
+      or query_upper:match('^DROP%s+TABLE') or query_upper:match('^ALTER%s+TABLE')) then
+      local explorer = require('enhance.explorer')
+      if explorer.is_open() then explorer.refresh() end
+    end
+  end)
 end
 
----Execute MySQL query using mysql CLI
----@param connection table MySQL connection
----@param query string SQL query
----@param query_bufnr number? Optional query buffer number
-function M.execute_mysql(connection, query, query_bufnr)
-  local output_lines = {}
-  local start_time = vim.loop.hrtime()
+M.execute_sqlserver = execute_helper
 
-  vim.notify("Executing MySQL query...", vim.log.levels.INFO)
-
-  local cmd = mysql_adapter.build_cmd(connection, { query = query })
-
-  vim.fn.jobstart(cmd, {
-    stdout_buffered = true,
-    on_stdout = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" then
-            table.insert(output_lines, line)
-          end
-        end
-      end
-    end,
-    on_stderr = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" and not line:match("^mysql: %[Warning%]") then
-            vim.notify("Error: " .. line, vim.log.levels.ERROR)
-          end
-        end
-      end
-    end,
-    on_exit = function(_, exit_code)
-      local end_time = vim.loop.hrtime()
-      local duration = (end_time - start_time) / 1000000
-
-      if exit_code == 0 then
-        -- Count rows using unified logic
-        local row_count = count_rows(output_lines, connection.type)
-
-        -- Build metadata
-        local metadata = {
-          execution_time = duration,
-          row_count = row_count,
-          db_type = connection.type,
-          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-          connection_name = connection.name,
-        }
-
-        -- Parse and format results for consistent display (if enabled)
-        local config = require("enhance.config")
-        local formatted_lines = output_lines
-        local parsed_result = nil
-        if config.get("format_results") then
-          local parser = require("enhance.parser")
-          local formatter = require("enhance.formatter")
-          parsed_result = parser.parse(output_lines, connection.type)
-          formatted_lines, metadata.result_rows = formatter.format(parsed_result)
-          -- Add parsed result to metadata for JSON detection
-          metadata.parsed_result = parsed_result
-        end
-
-        -- Display results with metadata (no footer added here)
-        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
-
-        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
-        local query_upper = query:upper():gsub("^%s+", "")
-        if query_upper:match("^CREATE%s+TABLE") or
-           query_upper:match("^DROP%s+TABLE") or
-           query_upper:match("^ALTER%s+TABLE") then
-          -- Refresh explorer to show updated table list
-          vim.schedule(function()
-            local explorer = require("enhance.explorer")
-            if explorer.is_open() then
-              explorer.refresh()
-            end
-          end)
-        end
-      else
-        vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
-      end
-    end,
-  })
-end
-
----Execute PostgreSQL query using psql CLI
----@param connection table PostgreSQL connection
----@param query string SQL query
----@param query_bufnr number? Optional query buffer number
-function M.execute_postgres(connection, query, query_bufnr)
-  local output_lines = {}
-  local start_time = vim.loop.hrtime()
-
-  vim.notify("Executing PostgreSQL query...", vim.log.levels.INFO)
-
-  -- Set PGPASSWORD before building cmd (adapter.build_cmd omits -w when password present)
-  if connection.password then
-    vim.fn.setenv('PGPASSWORD', connection.password)
-  end
-
-  local cmd = postgres_adapter.build_cmd(connection, { query = query })
-
-  vim.fn.jobstart(cmd, {
-    stdout_buffered = true,
-    on_stdout = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" then
-            table.insert(output_lines, line)
-          end
-        end
-      end
-    end,
-    on_stderr = function(_, data)
-      if data then
-        for _, line in ipairs(data) do
-          if line ~= "" then
-            vim.notify("Error: " .. line, vim.log.levels.ERROR)
-          end
-        end
-      end
-    end,
-    on_exit = function(_, exit_code)
-      local end_time = vim.loop.hrtime()
-      local duration = (end_time - start_time) / 1000000
-
-      -- Clear password from environment
-      if connection.password then
-        vim.fn.setenv('PGPASSWORD', nil)
-      end
-
-      if exit_code == 0 then
-        -- Count rows using unified logic (this also removes DML footer lines)
-        local row_count = count_rows(output_lines, connection.type)
-
-        -- Detect if this is a DML statement (INSERT/UPDATE/DELETE)
-        -- If row_count > 0 but output_lines is empty, it was a DML statement
-        local query_upper = query:upper():gsub("^%s+", "")
-        local is_insert = query_upper:match("^INSERT%s")
-        local is_update = query_upper:match("^UPDATE%s")
-        local is_delete = query_upper:match("^DELETE%s")
-        local is_dml = is_insert or is_update or is_delete
-
-        -- If DML statement with affected rows, add success message
-        if is_dml and row_count > 0 and #output_lines == 0 then
-          local action = is_insert and "inserted" or (is_update and "updated" or "deleted")
-          local message = string.format("✓ %d row%s %s", row_count, row_count == 1 and "" or "s", action)
-          table.insert(output_lines, message)
-        end
-
-        -- Build metadata
-        local metadata = {
-          execution_time = duration,
-          row_count = row_count,
-          db_type = connection.type,
-          timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-          connection_name = connection.name,
-        }
-
-        -- Parse and format results for consistent display (if enabled)
-        local config = require("enhance.config")
-        local formatted_lines = output_lines
-        local parsed_result = nil
-        if config.get("format_results") then
-          local parser = require("enhance.parser")
-          local formatter = require("enhance.formatter")
-          parsed_result = parser.parse(output_lines, connection.type)
-          formatted_lines, metadata.result_rows = formatter.format(parsed_result)
-          -- Add parsed result to metadata for JSON detection
-          metadata.parsed_result = parsed_result
-        end
-
-        -- Display results with metadata (no footer added here)
-        require("enhance.results").display(formatted_lines, connection, query_bufnr, metadata)
-
-        -- Auto-refresh explorer if this was a DDL statement (CREATE/DROP/ALTER TABLE)
-        local query_upper = query:upper():gsub("^%s+", "")
-        if query_upper:match("^CREATE%s+TABLE") or
-           query_upper:match("^DROP%s+TABLE") or
-           query_upper:match("^ALTER%s+TABLE") then
-          -- Refresh explorer to show updated table list
-          vim.schedule(function()
-            local explorer = require("enhance.explorer")
-            if explorer.is_open() then
-              explorer.refresh()
-            end
-          end)
-        end
-      else
-        vim.notify("Query execution failed (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
-      end
-    end,
-  })
-end
+-- All network-engine query paths share the same lossless response consumers and ownership.
+M.execute_mysql = execute_helper
+M.execute_postgres = execute_helper
 
 -- Expose for testing
 M._execute_sqlite = M.execute_sqlite
@@ -952,10 +577,6 @@ M._execute_mysql = M.execute_mysql
 M._execute_postgres = M.execute_postgres
 M._execute_single_sqlite_statement = execute_single_sqlite_statement
 M._execute_debatch_sqlite = execute_debatch_sqlite
-M._execute_single_sqlserver_statement = execute_single_sqlserver_statement
-M._execute_debatch_sqlserver = execute_debatch_sqlserver
 M._prepare_sqlite_query = sqlite_adapter.prepare_query
-M._build_sqlcmd_cmd = build_sqlcmd_cmd
-M._parse_batch_error_output = parse_batch_error_output
 
 return M

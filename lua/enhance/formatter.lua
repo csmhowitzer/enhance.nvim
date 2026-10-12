@@ -46,7 +46,7 @@ local function calculate_column_widths(headers, rows, config, column_types)
   for _, row in ipairs(rows) do
     for i, cell in ipairs(row) do
       if widths[i] then
-        local cell_width = #display_value(cell)
+        local cell_width = #display_value((cell == nil or cell == vim.NIL) and config.null_display or cell)
         if cell_width > widths[i] then
           widths[i] = cell_width
         end
@@ -110,9 +110,9 @@ local function format_row(row, widths, config)
     local width = widths[i] or config.min_column_width
     local cell = row[i]
 
-    -- Check for NULL: nil or empty string
+    -- Empty text is a value; only absent/explicit NULL cells use null_display.
     local value
-    if cell == nil or cell == "" then
+    if cell == nil or cell == vim.NIL then
       value = config.null_display
     else
       value = cell
@@ -172,7 +172,8 @@ function M.format(parsed_result, user_config)
 
   -- Calculate column widths
   local widths = calculate_column_widths(headers, rows, config, parsed_result.column_types)
-  local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
+  local explicit_nulls = parsed_result.metadata and parsed_result.metadata.transport == 'helper' or false
+  local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows, nil, explicit_nulls)
 
   local lines = {}
   local row_map = {}
@@ -188,6 +189,7 @@ function M.format(parsed_result, user_config)
     table.insert(lines, format_row(row, widths, config))
     row_map[#lines] = {
       values = row, widths = widths, json_columns = json_columns,
+      explicit_nulls = explicit_nulls,
       column_types = parsed_result.column_types,
       rows = rows, headers = headers, row_idx = row_idx,
     }
@@ -220,7 +222,8 @@ function M.format_multiple_result_sets(result_sets, user_config)
 
     if #headers > 0 then
       local widths = calculate_column_widths(headers, rows, config, result_set.column_types)
-      local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows)
+      local explicit_nulls = result_set.metadata and result_set.metadata.transport == 'helper' or false
+      local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows, nil, explicit_nulls)
 
       -- Format header
       table.insert(all_lines, format_row(headers, widths, config))
@@ -233,6 +236,7 @@ function M.format_multiple_result_sets(result_sets, user_config)
         table.insert(all_lines, format_row(row, widths, config))
         row_map[#all_lines] = {
           values = row, widths = widths, json_columns = json_columns,
+          explicit_nulls = explicit_nulls,
           column_types = result_set.column_types,
           rows = rows, headers = headers, row_idx = row_idx,
         }
@@ -288,7 +292,7 @@ local function format_single_statement(statement, statement_num, total_statement
     -- SELECT: format table
     local table_lines, table_rows = M.format(
       { headers = statement.result_table.headers, rows = statement.result_table.rows,
-        column_types = statement.result_table.column_types },
+        column_types = statement.result_table.column_types, metadata = statement.result_table.metadata },
       user_config
     )
     for line_num, line in ipairs(table_lines) do

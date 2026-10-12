@@ -455,14 +455,14 @@ function M.display(lines, connection, query_bufnr, metadata)
       for i, result_set in ipairs(metadata.parsed_result.result_sets) do
         json_columns[i] = detector.detect_json_columns(
           result_set.headers,
-          result_set.rows
+          result_set.rows, nil, result_set.metadata and result_set.metadata.transport == 'helper'
         )
       end
     -- Handle single result set (backward compatibility)
     else
       json_columns = detector.detect_json_columns(
         metadata.parsed_result.headers,
-        metadata.parsed_result.rows
+        metadata.parsed_result.rows, nil, metadata.parsed_result.metadata and metadata.parsed_result.metadata.transport == 'helper'
       )
     end
 
@@ -704,10 +704,10 @@ function M.apply_type_highlighting(bufnr, config, metadata)
   local offset = config.status_line and config.status_line.enabled
     and config.status_line.position == 'top' and 2 or 0
   for line_num, row in pairs(metadata.result_rows) do
-    for col, type_name in ipairs(row.column_types or {}) do
+    for col, type_name in ipairs(type(row) == 'table' and row.column_types or {}) do
       local value = row.values[col]
       local group = type_highlight(type_name)
-      if group and value ~= nil and value ~= '' and value ~= 'NULL'
+      if group and value ~= nil and value ~= vim.NIL and value ~= '' and (row.explicit_nulls or value ~= 'NULL')
           and not (row.json_columns and row.json_columns[col] and json_utils.is_json(value)) then
         local start_col, end_col = column_range(row.widths, col)
         vim.api.nvim_buf_add_highlight(bufnr, ns_id, group, line_num + offset - 1, start_col, end_col)
@@ -740,14 +740,14 @@ function M.show_cell()
   end
 
   local value = row.values[column]
-  local text = value == nil and 'NULL' or tostring(value)
+  local text = (value == nil or value == vim.NIL) and 'NULL' or tostring(value)
   local is_json = row.json_columns and row.json_columns[column] and json_utils.is_json(text)
   if is_json then
     require('enhance.json_viewer').show()
     return
   end
 
-  local group = text == 'NULL' and 'EnhanceNull'
+  local group = (value == nil or value == vim.NIL or (not row.explicit_nulls and value == 'NULL')) and 'EnhanceNull'
     or type_highlight(row.column_types and row.column_types[column])
   local header = row.headers and row.headers[column]
   if not header or header == '' then header = string.format('Column %d', column) end
@@ -883,7 +883,7 @@ function M.copy_cell()
     local start_col, end_col = column_range(row.widths, i)
     if col >= start_col and col < end_col then
       local value = row.values[i]
-      copy_text(value == nil and 'NULL' or tostring(value))
+      copy_text((value == nil or value == vim.NIL) and 'NULL' or tostring(value))
       return
     end
   end
@@ -901,7 +901,7 @@ function M.copy_row()
   local values = {}
   for i = 1, #row.widths do
     local value = row.values[i]
-    values[i] = value == nil and 'NULL' or tostring(value)
+    values[i] = (value == nil or value == vim.NIL) and 'NULL' or tostring(value)
   end
   copy_text(table.concat(values, '\t'))
 end
@@ -915,7 +915,7 @@ function M.copy_result_set()
   end
 
   local function tsv(value)
-    value = value == nil and 'NULL' or tostring(value)
+    value = (value == nil or value == vim.NIL) and 'NULL' or tostring(value)
     if value:find('[\t\r\n]') then
       return '"' .. value:gsub('"', '""') .. '"'
     end
@@ -1110,6 +1110,23 @@ function M.apply_null_highlighting(bufnr, config)
 
   -- Create namespace for NULL highlights
   local ns_id = vim.api.nvim_create_namespace('enhance_null_highlight')
+  vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+
+  -- Structured rows carry actual NULL identity; never infer it from displayed text.
+  local has_rows, rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  if has_rows then
+    for line_num, row in pairs(rows) do
+      if type(row) == 'table' and row.explicit_nulls then
+        for col = 1, #row.widths do
+          local value = row.values[col]
+          if value == nil or value == vim.NIL then
+            local start_col, end_col = column_range(row.widths, col)
+            vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'EnhanceNull', tonumber(line_num) - 1, start_col, end_col)
+          end
+        end
+      end
+    end
+  end
 
   -- Get all lines in buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -1123,7 +1140,8 @@ function M.apply_null_highlighting(bufnr, config)
   -- Search for NULL values in each line and highlight them
   for line_num = data_start_line, #lines - 1 do
     local line = lines[line_num + 1]  -- Lua is 1-indexed, nvim is 0-indexed
-    if line then
+    local row = has_rows and (rows[line_num + 1] or rows[tostring(line_num + 1)])
+    if line and not (type(row) == 'table' and row.explicit_nulls) then
       -- Find all occurrences of " NULL " (with spaces to avoid partial matches)
       local start_pos = 1
       while true do

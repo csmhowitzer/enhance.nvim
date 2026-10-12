@@ -26,3 +26,17 @@ connections.json
 *.tmp.sql
 *.tmp
 
+# Maintainer-generated helper publish outputs and release assets
+/dist/
+
+# .NET helper build outputs
+/helper/bin/
+/helper/obj/
+/helper-tests/bin/
+/helper-tests/obj/
+
+# Go helper executables from direct maintainer builds
+/helper-postgres/helper-postgres
+/helper-postgres/helper-postgres.exe
+/helper-postgres/enhance-helper-postgres
+/helper-postgres/enhance-helper-postgres.exe

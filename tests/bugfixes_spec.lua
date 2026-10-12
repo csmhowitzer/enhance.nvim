@@ -73,11 +73,16 @@ describe("enhance.bugfixes", function()
         database = ":memory:"
       }
       
-      -- Should either succeed or return nil, but not crash
+      -- Capture the expected error instead of emitting it as a runner/startup error.
+      local original_notify = vim.notify
+      local notification
+      vim.notify = function(message, level) notification = { message, level } end
       local ok, result = pcall(explorer._get_connection_tmp_dir, connection)
+      vim.notify = original_notify
       assert.is_true(ok)  -- Should not throw error
-      -- Result could be nil (error) or string (success)
-      assert.is_true(result == nil or type(result) == "string")
+      assert.is_nil(result)
+      assert.equals(vim.log.levels.ERROR, notification[2])
+      assert.is_truthy(notification[1]:find('Failed to create tmp directory', 1, true))
     end)
   end)
 
@@ -101,4 +106,3 @@ describe("enhance.bugfixes", function()
     end)
   end)
 end)
-

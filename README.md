@@ -28,7 +28,7 @@ A pure Lua database interface for Neovim with intelligent result formatting and 
 
 ### CLI Tools
 
-enhance.nvim uses database CLI tools for query execution. Install the tools for your databases:
+SQLite queries use its CLI. SQL Server/MySQL/PostgreSQL queries use structured helpers, but their CLIs remain required for connection probes, completion, and explorer metadata. Install the tools for your databases:
 
 | Database | CLI Tool |
 |----------|----------|
@@ -110,9 +110,11 @@ When connecting to databases running in Docker containers, note the following:
 -- In your lua/plugins/enhance.lua or similar
 return {
   {
-    "kristijanhusak/vim-dadbod", -- required 
-    "kristijanhusak/vim-dadbod-completion", -- optional
-    "csmhowitzer/enhance.nvim",  -- or dir = "~/plugins/enhance.nvim" for local
+    "csmhowitzer/enhance.nvim",
+    dependencies = {
+      "kristijanhusak/vim-dadbod", -- required
+      "kristijanhusak/vim-dadbod-completion", -- optional
+    },
     config = function()
       require("enhance").setup({
         enabled = true,
@@ -123,6 +125,30 @@ return {
   },
 }
 ```
+
+### Structured Query Helpers
+
+- SQL Server and MySQL/MariaDB queries use the bundled .NET helper; PostgreSQL uses a bundled Go companion. There is no CLI-table/text fallback. **The checked-in releases are still unpublished, so queries report a missing-helper error until immutable releases are published and pinned.** The existing CLIs remain required for connection probes, completion, and explorer/catalog operations; SQLite execution is unchanged.
+- Once the release manifests are populated, lazy.nvim automatically runs the plugin's `build.lua` during installation/update. No .NET/Go installation, compilation, PATH change, or helper-path configuration is needed.
+- MySQL/PostgreSQL accept `ssl_mode`: `disable`, `prefer` (default, matching typical CLI behavior), `require`, `verify-ca`, or `verify-full`. `prefer` may connect without TLS and does not guarantee certificate validation; choose `verify-full` for authenticated TLS. PostgreSQL requires an explicit user/username; helper execution does not inherit PG environment/service/password files. Custom TLS certificate files and GSS authentication are not currently exposed by this helper configuration.
+- Helpers execute server SQL, not client scripting: SQLCMD GO/directives, mysql DELIMITER/source commands, psql backslash commands, and PostgreSQL COPY STDIN/STDOUT/replication streams are unsupported. Unsupported COPY responses fail explicitly rather than discarding data. A connection lasts for one execution; cross-execution transactions/session state are not supported.
+- Installation uses HTTPS downloads and the SHA-256 hashes pinned in the plugin checkout. Verified binaries are cached under Neovim's data directory; health checks and path lookup never download anything.
+- Uses standard OS utilities: `curl` plus `shasum` on macOS, `sha256sum` on Linux, or PowerShell's `Get-FileHash` on Windows. Minimal Linux installations may need these utilities and the runtime's OS libraries.
+- Maintainer release instructions: `docs/HELPER_PACKAGING.md`.
+
+### Ubuntu 24.04 / WSL2 Prerequisites
+
+- WSL2 runs the Linux helpers; the installer detects x64 or ARM64 automatically.
+- On a minimal Ubuntu 24.04 installation, install standard OS libraries and download utilities with apt:
+
+```sh
+sudo apt update
+sudo apt install curl ca-certificates libicu74 libssl3t64 libgssapi-krb5-2
+```
+
+- These are Ubuntu packages, not .NET/Go SDKs or runtimes. ICU is required: without it, the .NET helper can abort even when its version handshake succeeds. The plugin never runs apt or sudo itself.
+- Install the database CLI tools listed above for the databases you use. The exact packages differ on older Ubuntu releases; Ubuntu 24.04 is the initial Linux validation target, not a claim of support for every distribution.
+- Public helper releases are still unpublished. These prerequisites do not bypass the missing-helper release gate or require any development resolver configuration.
 
 ### Connections File
 
@@ -203,7 +229,7 @@ enhance.nvim uses a standard database URL connection string and a name property 
 - `password` - Password
 - `TrustServerCertificate` - `yes` or `no` (default: `yes` for self-signed certs)
 
-**Note:** Omit `user` and `password` for Windows Authentication (adds `-E` flag to sqlcmd)
+**Note:** Omit `user` and `password` for integrated authentication. The helper uses host authentication prerequisites; connection probes still use sqlcmd. TLS certificate validation is enabled unless `trust_server_certificate = true` is explicitly configured.
 
 #### MySQL
 
@@ -445,16 +471,16 @@ The non-JSON cell popup has padding around short values. `<leader>dh` adds a
 color-matched datatype row between each SQL Server table's column names and
 separator, including empty tables when type metadata is available. It starts
 hidden and toggles across open results without changing copied data.
-SQL Server's `sqlcmd` may limit values longer than 4,096 characters before
-Enhance receives them; copying preserves the full value returned by `sqlcmd`.
+SQL Server queries receive complete structured values from the driver, without
+sqlcmd's output-width limit or delimiter ambiguity. Visual truncation does not
+change the values retained for copying or popups. Empty text is not SQL NULL.
 
 SQL Server result cells with numeric types use `EnhanceNumberCell` (peach);
 date/time types use `EnhanceDateCell` (mauve). Colors follow the SQL result
 column's actual type, so numeric- or date-looking text in `varchar`/`nvarchar`
 columns stays plain. NULL and detected JSON cells retain their separate
-highlights. When SQL Server cannot describe a query's result types (for example,
-one using a local temporary table), Enhance displays its values without type
-colors. The type lookup runs as an additional `sqlcmd` query for each result set.
+highlights. Column types come from the executing reader, including empty result
+sets; no separate describe query or speculative result-to-statement matching is used.
 
 ### Features
 
@@ -544,14 +570,15 @@ count
 
 ### SQL Server
 
-enhance.nvim provides **full SSMS parity** for SQL Server with advanced features:
+SQL Server query execution uses a structured driver-backed transport:
 
-- **Stop-on-Error Execution**: DML/DDL statements execute individually and stop on first error
-- **Individual Statement Timing**: Each DML/DDL statement shows its own execution time
-- **Batch Mode for SELECT**: Multiple SELECT statements execute together for performance
-- **Smart Error Detection**: Detects errors even when `sqlcmd` exit code is 0
+- **Unchanged SQL**: One submitted query uses one command/connection, preserving literals, comments, variables, temporary tables, and transaction context within the request. There is no separate-connection debatching, SQL replay, or implicit transaction.
+- **Native Results**: Positional columns/rows preserve arbitrary text, NULLs, empty values, multiple results, and empty-result metadata. Driver type labels need no extra metadata query.
+- **Structured Errors**: Earlier captured results and database errors can appear together; errors are never inferred from cell text. Native SQL Server error/transaction semantics apply, not client-imposed stop-on-error semantics.
+- **Asynchronous Execution**: Re-execution supersedes older work; wiping the query buffer cancels its process. Total timing and aggregate affected counts are shown, not invented per-statement attribution. Process cancellation does not prove rollback.
+- **Server SQL Only**: `GO`, SQLCMD variables/directives, and script includes are not supported by this helper. They are not silently rewritten or routed through a text fallback; SQL Server reports unsupported syntax as an error.
 - **Data-Driven Highlighting**: Error messages highlighted in red automatically
-- **Row Count Extraction**: Shows affected rows for INSERT/UPDATE/DELETE operations
+- **Row Counts**: Returned table-row counts and aggregate affected-row counts are kept separate. SQL Server results always use structured table rendering, including when the legacy `format_results` option is false.
 
 **Example - Multiple DML Statements:**
 ```sql
@@ -562,13 +589,8 @@ INSERT INTO AuditLog (action, timestamp) VALUES ('cleanup', GETDATE());
 
 **Output:**
 ```
-Statements: 3 | Rows: 15 | 45.23ms | ProductionDB | sqlserver | 2025-12-17 22:04:38
-────────────────────────────────────────────────────────────────────────────────────
-✓ Updated 1 row | 12.34ms
-
-✓ Deleted 10 rows | 18.45ms
-
-✓ Inserted 1 row | 14.44ms
+No results
+Rows affected: 12
 ```
 
 ### SQLite, MySQL, PostgreSQL

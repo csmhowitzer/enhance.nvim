@@ -13,12 +13,11 @@ vim.opt.hidden = true
 -- Load the plugin
 require("enhance").setup({
   enabled = true,
-  connections = {
+  connections_file = {
     {
       name = "Test SQLite",
       type = "sqlite",
-      path = "~/.local/share/nvim/dadbod_ui/example.db",
+      path = ":memory:",
     }
   },
 })
-

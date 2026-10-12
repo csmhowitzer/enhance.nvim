@@ -1,0 +1,22 @@
+describe('public lazy.nvim installation examples', function()
+  local root = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h')
+  local function check(spec)
+    assert.equals('csmhowitzer/enhance.nvim', spec[1])
+    assert.is_nil(spec[2], 'Dependency repositories must not be positional plugin fields')
+    assert.are.same({ 'kristijanhusak/vim-dadbod', 'kristijanhusak/vim-dadbod-completion' }, spec.dependencies)
+    assert.is_nil(spec.dir, 'Public installation must not depend on a developer checkout')
+    assert.is_nil(spec.build, 'Use the automatic build.lua discovery rather than overriding it')
+  end
+
+  it('installs Enhance itself with dependencies from the README', function()
+    local text = table.concat(vim.fn.readfile(root .. '/README.md'), '\n')
+    local example = assert(text:match('### With lazy%.nvim%s+```lua%s+(.-)```'))
+    check(assert(loadstring(example))()[1])
+  end)
+
+  it('installs Enhance itself with dependencies from help', function()
+    local text = table.concat(vim.fn.readfile(root .. '/doc/enhance.txt'), '\n')
+    local example = assert(text:match('Using lazy%.nvim:%s+>lua%s+(.-)\n<'))
+    check(assert(loadstring('return ' .. example))())
+  end)
+end)

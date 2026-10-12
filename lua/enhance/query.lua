@@ -138,11 +138,8 @@ function M.execute_current_query(bufnr)
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local query = table.concat(lines, "\n")
 
-  -- Remove comment lines
-  query = query:gsub("%-%-[^\n]*\n", "")
-  query = vim.trim(query)
-
-  if query == "" then
+  -- Check emptiness without rewriting SQL literals, comments, or whitespace.
+  if vim.trim(query) == "" then
     vim.notify("No query to execute", vim.log.levels.WARN)
     return
   end
@@ -205,9 +202,8 @@ function M.execute_visual_selection(bufnr)
   end
 
   local query = table.concat(lines, "\n")
-  query = vim.trim(query)
 
-  if query == "" then
+  if vim.trim(query) == "" then
     vim.notify("No query to execute", vim.log.levels.WARN)
     return
   end

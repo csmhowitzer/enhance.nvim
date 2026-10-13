@@ -52,6 +52,20 @@ describe('enhance SQL Server table dashboard catalog', function()
     }, received)
   end)
 
+  it('resolves the explorer\'s quoted schema identity on table dashboards', function()
+    local received
+    vim.fn.jobstart = function(cmd, opts)
+      local sql = cmd[#cmd]
+      assert.is_not_nil(sql:find("SCHEMA_NAME(t.schema_id) = N'a.b'", 1, true))
+      assert.is_not_nil(sql:find("t.name = N'O''Brien'", 1, true))
+      opts.on_stdout(nil, {})
+      opts.on_exit(nil, 0)
+      return 1
+    end
+    data.fetch_references(conn, "[a.b].[O'Brien]", function(refs) received = refs end)
+    assert.is_true(vim.wait(200, function() return received ~= nil end, 10))
+  end)
+
   it('recognizes saved query references without mistaking comments or longer names', function()
     vim.fn.readfile = function(path)
       if path:find('artist.sql', 1, true) then return { '-- Artists', 'SELECT * FROM dbo.Artists;' } end

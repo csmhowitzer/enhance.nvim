@@ -106,15 +106,15 @@ describe("enhance.db.sqlserver build_cmd", function()
     assert.is_true(found)
   end)
 
-  it("includes -U/-P for SQL auth when user/password provided", function()
+  it("includes -U without exposing the SQL auth password in argv", function()
     local cmd = adapter.build_cmd(base, { query = "SELECT 1;" })
-    local u, p = false, false
+    local u = false
     for i, v in ipairs(cmd) do
       if v == "-U" and cmd[i+1] == "sa"     then u = true end
-      if v == "-P" and cmd[i+1] == "secret" then p = true end
+      assert.not_equals("-P", v)
+      assert.not_equals("secret", v)
     end
     assert.is_true(u)
-    assert.is_true(p)
   end)
 
   it("uses -E (Windows auth) when no user/password", function()

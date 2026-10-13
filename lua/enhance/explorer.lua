@@ -9,8 +9,14 @@ local explorer_win = nil
 ---@type number? Buffer ID for explorer
 local explorer_buf = nil
 
----@type number? Tab number where enhance workspace is active
+---@type number? Existing tab where enhance workspace is active
 local explorer_tab = nil
+
+---@type number? Original editor buffer replaced by the welcome page
+local initial_editor_buf = nil
+
+---@type integer? Autocmd group for the active workspace
+local workspace_autocmd_group = nil
 
 ---@type number? Window ID for query editor
 local query_editor_win = nil
@@ -517,10 +523,6 @@ local function fetch_tables(connection, force_refresh)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E") -- Windows authentication
 		end
@@ -533,12 +535,12 @@ local function fetch_tables(connection, force_refresh)
 		table.insert(cmd, "-Q")
 		table.insert(
 			cmd,
-			"SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME;"
+			"SELECT QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME;"
 		)
 
-		local output = vim.fn.system(cmd)
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
@@ -548,60 +550,27 @@ local function fetch_tables(connection, force_refresh)
 		end
 	elseif db_type == "mysql" or db_type == "mariadb" then
 		-- MySQL: SHOW TABLES
-		local cmd = {
-			"mysql",
-			"-h",
-			connection.host or "localhost",
-			"-D",
-			connection.database,
-			"-N", -- No column names
-			"-s", -- Silent mode
-		}
+		local cmd = require('enhance.db.mysql').build_cmd(connection,
+			{ query = "SHOW TABLES;", flags = { "-N", "-s" } })
 
-		if connection.user then
-			table.insert(cmd, "-u")
-			table.insert(cmd, connection.user)
-		end
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		if connection.password then
-			table.insert(cmd, "-p" .. connection.password)
-		end
-
-		table.insert(cmd, "-e")
-		table.insert(cmd, "SHOW TABLES;")
-
-		local output = vim.fn.system(cmd)
-
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				if line ~= "" then
-					table.insert(tables, line)
+					table.insert(tables, require('enhance.db.object_identity').label(nil, line, db_type))
 				end
 			end
 		end
 	elseif db_type == "postgres" or db_type == "postgresql" then
 		-- PostgreSQL: Query pg_tables
-		local cmd = {
-			"psql",
-			"-h",
-			connection.host or "localhost",
-			"-d",
-			connection.database,
-			"-t", -- Tuples only (no headers)
-			"-A", -- Unaligned output
-		}
+		local cmd = require('enhance.db.postgres').build_cmd(connection,
+			{ query = [[SELECT '"' || replace(schemaname, '"', '""') || '"."' || replace(tablename, '"', '""') || '"' FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND schemaname NOT LIKE 'pg_toast%' ORDER BY schemaname, tablename;]],
+				flags = { "-t", "-A" } })
 
-		if connection.user then
-			table.insert(cmd, "-U")
-			table.insert(cmd, connection.user)
-		end
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		table.insert(cmd, "-c")
-		table.insert(cmd, "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;")
-
-		local output = vim.fn.system(cmd)
-
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				if line ~= "" then
 					table.insert(tables, line)
@@ -648,10 +617,6 @@ local function fetch_views(connection, force_refresh)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E")
 		end
@@ -659,9 +624,9 @@ local function fetch_views(connection, force_refresh)
 			table.insert(cmd, "-C")
 		end
 		table.insert(cmd, "-Q")
-		table.insert(cmd, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS ORDER BY TABLE_NAME;")
-		local output = vim.fn.system(cmd)
-		if vim.v.shell_error == 0 then
+		table.insert(cmd, "SELECT QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) FROM INFORMATION_SCHEMA.VIEWS ORDER BY TABLE_SCHEMA, TABLE_NAME;")
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
@@ -699,10 +664,6 @@ local function fetch_procedures(connection, force_refresh)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E")
 		end
@@ -712,10 +673,10 @@ local function fetch_procedures(connection, force_refresh)
 		table.insert(cmd, "-Q")
 		table.insert(
 			cmd,
-			"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_NAME;"
+			"SELECT QUOTENAME(ROUTINE_SCHEMA) + '.' + QUOTENAME(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;"
 		)
-		local output = vim.fn.system(cmd)
-		if vim.v.shell_error == 0 then
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
@@ -753,10 +714,6 @@ local function fetch_functions(connection, force_refresh)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E")
 		end
@@ -766,10 +723,10 @@ local function fetch_functions(connection, force_refresh)
 		table.insert(cmd, "-Q")
 		table.insert(
 			cmd,
-			"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' ORDER BY ROUTINE_NAME;"
+			"SELECT QUOTENAME(ROUTINE_SCHEMA) + '.' + QUOTENAME(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;"
 		)
-		local output = vim.fn.system(cmd)
-		if vim.v.shell_error == 0 then
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
@@ -807,10 +764,6 @@ local function fetch_temp_tables(connection, force_refresh)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E")
 		end
@@ -819,8 +772,8 @@ local function fetch_temp_tables(connection, force_refresh)
 		end
 		table.insert(cmd, "-Q")
 		table.insert(cmd, "SELECT name FROM tempdb.sys.tables WHERE name LIKE '##%' ORDER BY name;")
-		local output = vim.fn.system(cmd)
-		if vim.v.shell_error == 0 then
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
+		if exit_code == 0 then
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
@@ -1971,28 +1924,28 @@ function parse_line(line, line_num)
 			if parent_conn then
 				return { type = "buffers", conn_name = parent_conn }
 			end
-		elseif name:match("Temp") and name:match("Tables") then
+		elseif name == "Temp Tables" and metadata then
 			-- "Temp Tables" is nested under the Tables section (check before generic "Tables")
 			local parent_info = find_parent_info(line_num)
 			if parent_info and parent_info.type == "tables" then
 				return { type = "temp_tables", conn_name = parent_info.conn_name }
 			end
-		elseif name:match("Tables") then
+		elseif name == "Tables" and metadata and indent_level == 4 then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "tables", conn_name = parent_conn }
 			end
-		elseif name:match("Views") then
+		elseif name == "Views" and metadata then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "views", conn_name = parent_conn }
 			end
-		elseif name:match("Stored") and name:match("Procedures") then
+		elseif name == "Stored Procedures" and metadata then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "procedures", conn_name = parent_conn }
 			end
-		elseif name:match("Functions") then
+		elseif name == "Functions" and metadata then
 			local parent_conn = find_parent_connection(line_num)
 			if parent_conn then
 				return { type = "functions", conn_name = parent_conn }
@@ -2115,74 +2068,80 @@ end
 ---@return string? query SQL query or nil
 local function generate_metadata_query(connection, table_name, query_type)
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+	local identity = require('enhance.db.object_identity')
+	local qualified, schema, bare = identity.sql(table_name, db_type)
+	local name_literal = identity.literal(bare, db_type)
+	local schema_literal = identity.literal(schema or
+		(db_type == 'postgres' or db_type == 'postgresql') and 'public' or connection.database or '', db_type)
+	local object_literal = identity.literal(qualified, db_type)
 
 	if query_type == "table_list" then
 		-- Simple SELECT with database-specific row limiting
 		if db_type == "sqlserver" or db_type == "mssql" then
 			-- SQL Server uses TOP
-			return string.format("SELECT TOP 200 * FROM %s;", table_name)
+			return string.format("SELECT TOP 200 * FROM %s;", qualified)
 		else
 			-- SQLite, MySQL, PostgreSQL use LIMIT
-			return string.format("SELECT * FROM %s LIMIT 200;", table_name)
+			return string.format("SELECT * FROM %s LIMIT 200;", qualified)
 		end
 	elseif query_type == "table_columns" then
 		-- Column information query
 		if db_type == "sqlite" then
-			return string.format("PRAGMA table_info(%s);", table_name)
+			return string.format("PRAGMA table_info(%s);", qualified)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
 SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, IS_NULLABLE
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = '%s'
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
 ORDER BY ORDINAL_POSITION;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
-			return string.format("DESCRIBE %s;", table_name)
+			return string.format("DESCRIBE %s;", qualified)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
 				[[
 SELECT column_name, data_type, character_maximum_length, is_nullable
 FROM information_schema.columns
-WHERE table_name = '%s'
+WHERE table_schema = %s AND table_name = %s
 ORDER BY ordinal_position;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		end
 	elseif query_type == "table_pks" then
 		-- Primary key information
 		if db_type == "sqlite" then
-			return string.format("PRAGMA table_info(%s);", table_name) -- pk column shows 1 for PKs
+			return string.format("PRAGMA table_info(%s);", qualified) -- pk column shows 1 for PKs
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
 SELECT COLUMN_NAME
 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-WHERE TABLE_NAME = '%s' AND CONSTRAINT_NAME LIKE 'PK%%'
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND CONSTRAINT_NAME LIKE 'PK%%'
 ORDER BY ORDINAL_POSITION;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
-			return string.format("SHOW KEYS FROM %s WHERE Key_name = 'PRIMARY';", table_name)
+			return string.format("SHOW KEYS FROM %s WHERE Key_name = 'PRIMARY';", qualified)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
 				[[
 SELECT a.attname
 FROM pg_index i
 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-WHERE i.indrelid = '%s'::regclass AND i.indisprimary;
+WHERE i.indrelid = %s::regclass AND i.indisprimary;
 ]],
-				table_name
+				object_literal
 			)
 		end
 	elseif query_type == "table_fks" then
 		-- Foreign key information
 		if db_type == "sqlite" then
-			return string.format("PRAGMA foreign_key_list(%s);", table_name)
+			return string.format("PRAGMA foreign_key_list(%s);", qualified)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
@@ -2194,9 +2153,9 @@ SELECT
     COL_NAME(fc.referenced_object_id, fc.referenced_column_id) AS REFERENCED_COLUMN
 FROM sys.foreign_keys AS fk
 INNER JOIN sys.foreign_key_columns AS fc ON fk.object_id = fc.constraint_object_id
-WHERE OBJECT_NAME(fk.parent_object_id) = '%s';
+WHERE fk.parent_object_id = OBJECT_ID(%s);
 ]],
-				table_name
+				object_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
 			return string.format(
@@ -2207,9 +2166,9 @@ SELECT
     REFERENCED_TABLE_NAME,
     REFERENCED_COLUMN_NAME
 FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-WHERE TABLE_NAME = '%s' AND REFERENCED_TABLE_NAME IS NOT NULL;
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s AND REFERENCED_TABLE_NAME IS NOT NULL;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
@@ -2220,17 +2179,17 @@ SELECT
     ccu.table_name AS foreign_table_name,
     ccu.column_name AS foreign_column_name
 FROM information_schema.table_constraints AS tc
-JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name
-JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
-WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = '%s';
+JOIN information_schema.key_column_usage AS kcu ON tc.constraint_catalog = kcu.constraint_catalog AND tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage AS ccu ON tc.constraint_catalog = ccu.constraint_catalog AND tc.constraint_schema = ccu.constraint_schema AND tc.constraint_name = ccu.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = %s AND tc.table_name = %s;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		end
 	elseif query_type == "table_indexes" then
 		-- Index information
 		if db_type == "sqlite" then
-			return string.format("PRAGMA index_list(%s);", table_name)
+			return string.format("PRAGMA index_list(%s);", qualified)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
@@ -2240,12 +2199,12 @@ SELECT
     COL_NAME(ic.object_id, ic.column_id) AS COLUMN_NAME
 FROM sys.indexes AS i
 INNER JOIN sys.index_columns AS ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-WHERE OBJECT_NAME(i.object_id) = '%s';
+WHERE i.object_id = OBJECT_ID(%s);
 ]],
-				table_name
+				object_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
-			return string.format("SHOW INDEX FROM %s;", table_name)
+			return string.format("SHOW INDEX FROM %s;", qualified)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
 				[[
@@ -2253,25 +2212,25 @@ SELECT
     indexname,
     indexdef
 FROM pg_indexes
-WHERE tablename = '%s';
+WHERE schemaname = %s AND tablename = %s;
 ]],
-				table_name
+				schema_literal, name_literal
 			)
 		end
 	elseif query_type == "table_create" then
 		-- Generate CREATE TABLE script
 		if db_type == "sqlite" then
 			-- SQLite: Get schema from sqlite_master
-			return string.format("SELECT sql FROM sqlite_master WHERE type='table' AND name='%s';", table_name)
+			return string.format("SELECT sql FROM sqlite_master WHERE type='table' AND name=%s;", name_literal)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			-- SQL Server: Generate CREATE TABLE from INFORMATION_SCHEMA
 			return string.format(
 				[[
 -- CREATE TABLE script for %s
 SELECT
-    'CREATE TABLE [' + TABLE_SCHEMA + '].[' + TABLE_NAME + '] (' + CHAR(13) + CHAR(10) +
+    'CREATE TABLE ' + QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) + ' (' + CHAR(13) + CHAR(10) +
     STUFF((
-        SELECT ',' + CHAR(13) + CHAR(10) + '    [' + COLUMN_NAME + '] ' +
+        SELECT ',' + CHAR(13) + CHAR(10) + '    ' + QUOTENAME(COLUMN_NAME) + ' ' +
                DATA_TYPE +
                CASE
                    WHEN CHARACTER_MAXIMUM_LENGTH IS NOT NULL
@@ -2286,24 +2245,24 @@ SELECT
     ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') +
     CHAR(13) + CHAR(10) + ');' AS CreateScript
 FROM INFORMATION_SCHEMA.COLUMNS c
-WHERE TABLE_NAME = '%s'
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
 GROUP BY TABLE_SCHEMA, TABLE_NAME;
 ]],
 				table_name,
-				table_name
+				schema_literal, name_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
 			-- MySQL: Use SHOW CREATE TABLE
-			return string.format("SHOW CREATE TABLE %s;", table_name)
+			return string.format("SHOW CREATE TABLE %s;", qualified)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			-- PostgreSQL: Generate CREATE TABLE from information_schema
 			return string.format(
 				[[
 -- CREATE TABLE script for %s
 SELECT
-    'CREATE TABLE ' || table_name || ' (' || E'\n' ||
+    'CREATE TABLE ' || format('%%I.%%I', table_schema, table_name) || ' (' || E'\n' ||
     string_agg(
-        '    ' || column_name || ' ' ||
+        '    ' || quote_ident(column_name) || ' ' ||
         data_type ||
         CASE
             WHEN character_maximum_length IS NOT NULL
@@ -2315,11 +2274,11 @@ SELECT
         ORDER BY ordinal_position
     ) || E'\n' || ');' AS create_script
 FROM information_schema.columns
-WHERE table_name = '%s'
-GROUP BY table_name;
+WHERE table_schema = %s AND table_name = %s
+GROUP BY table_schema, table_name;
 ]],
 				table_name,
-				table_name
+				schema_literal, name_literal
 			)
 		end
 	elseif query_type == "table_update" then
@@ -2330,23 +2289,23 @@ GROUP BY table_name;
 -- UPDATE template for %s
 -- Get column names first, then build UPDATE statement
 SELECT 'UPDATE %s SET ' ||
-       group_concat(name || ' = ''value''', ', ') ||
-       ' WHERE rowid = 1;' AS update_template
-FROM pragma_table_info('%s');
+       group_concat('"' || replace(name, '"', '""') || '" = ''value''', ', ') ||
+        ' WHERE rowid = 1;' AS update_template
+FROM pragma_table_info(%s);
 ]],
 				table_name,
-				table_name,
-				table_name
+				qualified:gsub("'", "''"),
+				name_literal
 			)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
 -- UPDATE template for %s
 SELECT
-    'UPDATE [' + TABLE_SCHEMA + '].[' + TABLE_NAME + ']' + CHAR(13) + CHAR(10) +
+    'UPDATE ' + QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) + CHAR(13) + CHAR(10) +
     'SET ' + CHAR(13) + CHAR(10) +
     STUFF((
-        SELECT ',' + CHAR(13) + CHAR(10) + '    [' + COLUMN_NAME + '] = ' +
+        SELECT ',' + CHAR(13) + CHAR(10) + '    ' + QUOTENAME(COLUMN_NAME) + ' = ' +
                CASE
                    WHEN DATA_TYPE IN ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'real')
                    THEN '0'
@@ -2363,11 +2322,11 @@ SELECT
     ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') +
     CHAR(13) + CHAR(10) + 'WHERE /* condition */;' AS UpdateTemplate
 FROM INFORMATION_SCHEMA.COLUMNS c
-WHERE TABLE_NAME = '%s'
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
 GROUP BY TABLE_SCHEMA, TABLE_NAME;
 ]],
 				table_name,
-				table_name
+				schema_literal, name_literal
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
 			return string.format(
@@ -2376,7 +2335,7 @@ GROUP BY TABLE_SCHEMA, TABLE_NAME;
 SELECT CONCAT(
     'UPDATE %s SET ', CHAR(10),
     GROUP_CONCAT(
-        CONCAT('    ', COLUMN_NAME, ' = ',
+        CONCAT('    ', '`', REPLACE(COLUMN_NAME, '`', '``'), '`', ' = ',
             CASE
                 WHEN DATA_TYPE IN ('int', 'bigint', 'smallint', 'tinyint', 'decimal', 'numeric', 'float', 'double')
                 THEN '0'
@@ -2390,20 +2349,20 @@ SELECT CONCAT(
     CHAR(10), 'WHERE /* condition */;'
 ) AS update_template
 FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_NAME = '%s';
+WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s;
 ]],
 				table_name,
-				table_name,
-				table_name
+				qualified:gsub("'", "''"),
+				schema_literal, name_literal
 			)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
 				[[
 -- UPDATE template for %s
 SELECT
-    'UPDATE ' || table_name || E'\nSET ' || E'\n' ||
+    'UPDATE ' || format('%%I.%%I', table_schema, table_name) || E'\nSET ' || E'\n' ||
     string_agg(
-        '    ' || column_name || ' = ' ||
+        '    ' || quote_ident(column_name) || ' = ' ||
         CASE
             WHEN data_type IN ('integer', 'bigint', 'smallint', 'numeric', 'decimal', 'real', 'double precision')
             THEN '0'
@@ -2417,31 +2376,15 @@ SELECT
         ORDER BY ordinal_position
     ) || E'\nWHERE /* condition */;' AS update_template
 FROM information_schema.columns
-WHERE table_name = '%s'
-GROUP BY table_name;
+WHERE table_schema = %s AND table_name = %s
+GROUP BY table_schema, table_name;
 ]],
 				table_name,
-				table_name
+				schema_literal, name_literal
 			)
 		end
 	elseif query_type == "table_drop" then
-		-- Generate DROP TABLE script
-		if db_type == "sqlite" then
-			return string.format("DROP TABLE %s;", table_name)
-		elseif db_type == "sqlserver" or db_type == "mssql" then
-			return string.format(
-				[[
--- DROP TABLE script for %s
-DROP TABLE [dbo].[%s];
-]],
-				table_name,
-				table_name
-			)
-		elseif db_type == "mysql" or db_type == "mariadb" then
-			return string.format("DROP TABLE %s;", table_name)
-		elseif db_type == "postgres" or db_type == "postgresql" then
-			return string.format("DROP TABLE %s;", table_name)
-		end
+		return string.format("DROP TABLE %s;", qualified)
 	elseif query_type == "table_delete_records" then
 		-- Generate DELETE FROM script with WHERE template (safer)
 		if db_type == "sqlite" then
@@ -2453,18 +2396,18 @@ DELETE FROM %s
 WHERE rowid = ?;
 ]],
 				table_name,
-				table_name
+				qualified
 			)
 		elseif db_type == "sqlserver" or db_type == "mssql" then
 			return string.format(
 				[[
 -- DELETE records from %s
 -- WARNING: This will delete records. Modify WHERE clause before executing.
-DELETE FROM [dbo].[%s]
+DELETE FROM %s
 WHERE /* Add your condition here, e.g., [Id] = 1 */;
 ]],
 				table_name,
-				table_name
+				qualified
 			)
 		elseif db_type == "mysql" or db_type == "mariadb" then
 			return string.format(
@@ -2475,7 +2418,7 @@ DELETE FROM %s
 WHERE /* Add your condition here, e.g., id = 1 */;
 ]],
 				table_name,
-				table_name
+				qualified
 			)
 		elseif db_type == "postgres" or db_type == "postgresql" then
 			return string.format(
@@ -2486,7 +2429,7 @@ DELETE FROM %s
 WHERE /* Add your condition here, e.g., id = 1 */;
 ]],
 				table_name,
-				table_name
+				qualified
 			)
 		end
 	end
@@ -2501,6 +2444,13 @@ end
 ---@return string? script Generated SQL or nil
 local function generate_object_script(connection, object_name, query_type)
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
+	local identity = require('enhance.db.object_identity')
+	local qualified, schema, bare = identity.sql(object_name, db_type)
+	local qualified_literal = identity.literal(qualified, db_type)
+	local schema_literal = identity.literal(schema or 'dbo', db_type)
+	local name_literal = identity.literal(bare, db_type)
+	local temp_sql = identity.quote(object_name, 'sqlserver')
+	local temp_literal = identity.literal('tempdb..' .. temp_sql, 'sqlserver')
 
 	-- ── Views ─────────────────────────────────────────────────────────────────
 	if query_type == "view_alter" then
@@ -2510,10 +2460,10 @@ local function generate_object_script(connection, object_name, query_type)
 -- ALTER VIEW script for [%s]
 -- The current definition is shown by sp_helptext below.
 -- Copy the CREATE VIEW ... AS ... block, change CREATE to ALTER, and run it.
-EXEC sp_helptext '[%s]';
+EXEC sp_helptext %s;
 ]],
 				object_name,
-				object_name
+				qualified_literal
 			)
 		end
 
@@ -2524,10 +2474,10 @@ EXEC sp_helptext '[%s]';
 -- CREATE VIEW script for [%s]
 SELECT definition AS CreateScript
 FROM sys.sql_modules
-WHERE object_id = OBJECT_ID('[%s]');
+WHERE object_id = OBJECT_ID(%s);
 ]],
 				object_name,
-				object_name
+				qualified_literal
 			)
 		end
 
@@ -2537,16 +2487,16 @@ WHERE object_id = OBJECT_ID('[%s]');
 				[[
 -- DROP VIEW script for [%s]
 -- WARNING: This will permanently remove the view.
-DROP VIEW [dbo].[%s];
+DROP VIEW %s;
 ]],
 				object_name,
-				object_name
+				qualified
 			)
 		end
 
 	elseif query_type == "view_list" then
 		if db_type == "sqlserver" or db_type == "mssql" then
-			return string.format("SELECT TOP 200 * FROM [dbo].[%s];", object_name)
+			return string.format("SELECT TOP 200 * FROM %s;", qualified)
 		end
 
 	-- ── Stored Procedures ─────────────────────────────────────────────────────
@@ -2563,12 +2513,12 @@ SELECT
     NUMERIC_PRECISION,
     NUMERIC_SCALE
 FROM INFORMATION_SCHEMA.PARAMETERS
-WHERE SPECIFIC_NAME = '%s'
+WHERE SPECIFIC_SCHEMA = %s AND SPECIFIC_NAME = %s
   AND PARAMETER_NAME != ''
 ORDER BY ORDINAL_POSITION;
 ]],
 				object_name,
-				object_name
+				schema_literal, name_literal
 			)
 		end
 
@@ -2580,18 +2530,18 @@ ORDER BY ORDINAL_POSITION;
 -- Step 1: Run the query below to see parameter names and types
 SELECT PARAMETER_NAME, DATA_TYPE, PARAMETER_MODE
 FROM INFORMATION_SCHEMA.PARAMETERS
-WHERE SPECIFIC_NAME = '%s'
+WHERE SPECIFIC_SCHEMA = %s AND SPECIFIC_NAME = %s
   AND PARAMETER_NAME != ''
 ORDER BY ORDINAL_POSITION;
 
 -- Step 2: Fill in values and run the EXEC statement
-EXEC [dbo].[%s]
+EXEC %s
     -- @ParamName = <value>
 ;
 ]],
 				object_name,
-				object_name,
-				object_name
+				schema_literal, name_literal,
+				qualified
 			)
 		end
 
@@ -2602,10 +2552,10 @@ EXEC [dbo].[%s]
 -- ALTER PROCEDURE script for [%s]
 -- The current definition is shown by sp_helptext below.
 -- Copy the CREATE PROCEDURE ... block, change CREATE to ALTER, and run it.
-EXEC sp_helptext '[dbo].[%s]';
+EXEC sp_helptext %s;
 ]],
 				object_name,
-				object_name
+				qualified_literal
 			)
 		end
 
@@ -2615,10 +2565,10 @@ EXEC sp_helptext '[dbo].[%s]';
 				[[
 -- DROP PROCEDURE script for [%s]
 -- WARNING: This will permanently remove the stored procedure.
-DROP PROCEDURE [dbo].[%s];
+DROP PROCEDURE %s;
 ]],
 				object_name,
-				object_name
+				qualified
 			)
 		end
 
@@ -2636,12 +2586,12 @@ SELECT
     NUMERIC_PRECISION,
     NUMERIC_SCALE
 FROM INFORMATION_SCHEMA.PARAMETERS
-WHERE SPECIFIC_NAME = '%s'
+WHERE SPECIFIC_SCHEMA = %s AND SPECIFIC_NAME = %s
   AND PARAMETER_NAME != ''
 ORDER BY ORDINAL_POSITION;
 ]],
 				object_name,
-				object_name
+				schema_literal, name_literal
 			)
 		end
 
@@ -2653,17 +2603,16 @@ ORDER BY ORDINAL_POSITION;
 -- Step 1: Run the query below to see parameter names and types
 SELECT PARAMETER_NAME, DATA_TYPE, DATA_TYPE AS ReturnType
 FROM INFORMATION_SCHEMA.PARAMETERS
-WHERE SPECIFIC_NAME = '%s'
+WHERE SPECIFIC_SCHEMA = %s AND SPECIFIC_NAME = %s
 ORDER BY ORDINAL_POSITION;
 
 -- Step 2: Call the function (scalar or table-valued):
--- Scalar:       SELECT [dbo].[%s](<param1>, <param2>);
--- Table-valued: SELECT * FROM [dbo].[%s](<param1>, <param2>);
+-- Scalar:       SELECT %s(<param1>, <param2>);
+-- Table-valued: SELECT * FROM %s(<param1>, <param2>);
 ]],
 				object_name,
-				object_name,
-				object_name,
-				object_name
+				schema_literal, name_literal,
+				qualified, qualified
 			)
 		end
 
@@ -2674,10 +2623,10 @@ ORDER BY ORDINAL_POSITION;
 -- ALTER FUNCTION script for [%s]
 -- The current definition is shown by sp_helptext below.
 -- Copy the CREATE FUNCTION ... block, change CREATE to ALTER, and run it.
-EXEC sp_helptext '[dbo].[%s]';
+EXEC sp_helptext %s;
 ]],
 				object_name,
-				object_name
+				qualified_literal
 			)
 		end
 
@@ -2687,10 +2636,10 @@ EXEC sp_helptext '[dbo].[%s]';
 				[[
 -- DROP FUNCTION script for [%s]
 -- WARNING: This will permanently remove the function.
-DROP FUNCTION [dbo].[%s];
+DROP FUNCTION %s;
 ]],
 				object_name,
-				object_name
+				qualified
 			)
 		end
 
@@ -2711,17 +2660,17 @@ SELECT
     c.is_nullable   AS IsNullable
 FROM tempdb.sys.columns c
 JOIN tempdb.sys.types t ON c.user_type_id = t.user_type_id
-WHERE c.object_id = OBJECT_ID('tempdb..[%s]')
+WHERE c.object_id = OBJECT_ID(%s)
 ORDER BY c.column_id;
 ]],
 				object_name,
-				object_name
+				temp_literal
 			)
 		end
 
 	elseif query_type == "temp_list" then
 		if db_type == "sqlserver" or db_type == "mssql" then
-			return string.format("SELECT TOP 200 * FROM [%s];", object_name)
+			return string.format("SELECT TOP 200 * FROM %s;", temp_sql)
 		end
 
 	elseif query_type == "temp_create" then
@@ -2730,9 +2679,9 @@ ORDER BY c.column_id;
 				[[
 -- CREATE TABLE script for global temp table [%s]
 SELECT
-    'CREATE TABLE ' + '%s' + ' (' + CHAR(13) + CHAR(10) +
+    'CREATE TABLE ' + %s + ' (' + CHAR(13) + CHAR(10) +
     STUFF((
-        SELECT ',' + CHAR(13) + CHAR(10) + '    [' + c.name + '] ' +
+        SELECT ',' + CHAR(13) + CHAR(10) + '    ' + QUOTENAME(c2.name) + ' ' +
                t.name +
                CASE
                    WHEN t.name IN ('nvarchar','nchar','ntext') AND c.max_length > 0
@@ -2745,19 +2694,19 @@ SELECT
                CASE WHEN c.is_nullable = 0 THEN ' NOT NULL' ELSE '' END
         FROM tempdb.sys.columns c2
         JOIN tempdb.sys.types t ON c2.user_type_id = t.user_type_id
-        WHERE c2.object_id = OBJECT_ID('tempdb..[%s]')
+        WHERE c2.object_id = OBJECT_ID(%s)
         ORDER BY c2.column_id
         FOR XML PATH(''), TYPE
     ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') +
     CHAR(13) + CHAR(10) + ');' AS CreateScript
 FROM tempdb.sys.columns c
-WHERE c.object_id = OBJECT_ID('tempdb..[%s]')
+WHERE c.object_id = OBJECT_ID(%s)
 GROUP BY c.object_id;
 ]],
 				object_name,
-				object_name,
-				object_name,
-				object_name
+				identity.literal(temp_sql, 'sqlserver'),
+				temp_literal,
+				temp_literal
 			)
 		end
 
@@ -2767,10 +2716,10 @@ GROUP BY c.object_id;
 				[[
 -- DROP global temp table [%s]
 -- WARNING: This will permanently remove the temp table for all sessions.
-DROP TABLE [%s];
+DROP TABLE %s;
 ]],
 				object_name,
-				object_name
+				temp_sql
 			)
 		end
 	end
@@ -2812,10 +2761,6 @@ local function execute_query_for_script(connection, query)
 		if connection.user or connection.username then
 			table.insert(cmd, "-U")
 			table.insert(cmd, connection.user or connection.username)
-			if connection.password then
-				table.insert(cmd, "-P")
-				table.insert(cmd, connection.password)
-			end
 		else
 			table.insert(cmd, "-E")
 		end
@@ -2833,61 +2778,27 @@ local function execute_query_for_script(connection, query)
 		table.insert(cmd, "-h")
 		table.insert(cmd, "-1")
 
-		local output = vim.fn.system(cmd)
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			return output
 		end
 	elseif db_type == "mysql" or db_type == "mariadb" then
-		local cmd = {
-			"mysql",
-			"-h",
-			connection.host or "localhost",
-			"-D",
-			connection.database,
-			"-N", -- No column names
-			"-B", -- Batch mode
-		}
+		local cmd = require('enhance.db.mysql').build_cmd(connection,
+			{ query = query, flags = { "-N", "-B" } })
 
-		if connection.user then
-			table.insert(cmd, "-u")
-			table.insert(cmd, connection.user)
-		end
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		if connection.password then
-			table.insert(cmd, "-p" .. connection.password)
-		end
-
-		table.insert(cmd, "-e")
-		table.insert(cmd, query)
-
-		local output = vim.fn.system(cmd)
-
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			return output
 		end
 	elseif db_type == "postgres" or db_type == "postgresql" then
-		local cmd = {
-			"psql",
-			"-h",
-			connection.host or "localhost",
-			"-d",
-			connection.database,
-			"-t", -- Tuples only (no headers)
-			"-A", -- Unaligned output
-		}
+		local cmd = require('enhance.db.postgres').build_cmd(connection,
+			{ query = query, flags = { "-t", "-A" } })
 
-		if connection.user then
-			table.insert(cmd, "-U")
-			table.insert(cmd, connection.user)
-		end
+		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
 
-		table.insert(cmd, "-c")
-		table.insert(cmd, query)
-
-		local output = vim.fn.system(cmd)
-
-		if vim.v.shell_error == 0 then
+		if exit_code == 0 then
 			return output
 		end
 	end
@@ -2898,7 +2809,7 @@ end
 ---Fetch object definition from sys.sql_modules and build a ready-to-run ALTER or CREATE script
 ---Calls execute_query_for_script internally, so must be defined after it.
 ---@param connection table Database connection
----@param object_name string View/proc/function name (without schema)
+---@param object_name string Schema-qualified view/proc/function name
 ---@param query_type string "view_alter"|"view_create"|"proc_alter"|"func_alter"
 ---@return string script Ready-to-edit SQL script
 local function fetch_definition_script(connection, object_name, query_type)
@@ -2908,14 +2819,16 @@ local function fetch_definition_script(connection, object_name, query_type)
 		return string.format("-- fetch_definition_script: not supported for %s", db_type)
 	end
 
+	local identity = require('enhance.db.object_identity')
+	local qualified = identity.sql(object_name, db_type)
 	local query = string.format(
-		"SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(N'[dbo].[%s]')",
-		object_name
+		"SELECT definition FROM sys.sql_modules WHERE object_id = OBJECT_ID(%s)",
+		identity.literal(qualified, db_type)
 	)
 
 	local raw = execute_query_for_script(connection, query)
 	if not raw then
-		return string.format("-- Failed to fetch definition for [dbo].[%s]", object_name)
+		return string.format("-- Failed to fetch definition for %s", qualified)
 	end
 
 	-- Strip sqlcmd noise: "(N rows affected)" lines and surrounding blank lines
@@ -2923,7 +2836,7 @@ local function fetch_definition_script(connection, object_name, query_type)
 	definition = vim.trim(definition)
 
 	if definition == "" then
-		return string.format("-- No definition found for [dbo].[%s]", object_name)
+		return string.format("-- No definition found for %s", qualified)
 	end
 
 	-- For ALTER queries, replace the leading CREATE keyword
@@ -2980,41 +2893,9 @@ local function generate_table_script(connection, table_name, script_type)
 	-- For DROP and DELETE, we can generate directly without executing a query
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
-	if script_type == "table_drop" then
-		if db_type == "sqlserver" or db_type == "mssql" then
-			return string.format("-- DROP TABLE script for %s\nDROP TABLE [dbo].[%s];", table_name, table_name)
-		else
-			return string.format("-- DROP TABLE script for %s\nDROP TABLE %s;", table_name, table_name)
-		end
-	elseif script_type == "table_delete_records" then
-		if db_type == "sqlite" then
-			return string.format(
-				[[-- DELETE records from %s
--- WARNING: This will delete records. Modify WHERE clause before executing.
-DELETE FROM %s
-WHERE rowid = ?;]],
-				table_name,
-				table_name
-			)
-		elseif db_type == "sqlserver" or db_type == "mssql" then
-			return string.format(
-				[[-- DELETE records from %s
--- WARNING: This will delete records. Modify WHERE clause before executing.
-DELETE FROM [dbo].[%s]
-WHERE /* Add your condition here, e.g., [Id] = 1 */;]],
-				table_name,
-				table_name
-			)
-		else
-			return string.format(
-				[[-- DELETE records from %s
--- WARNING: This will delete records. Modify WHERE clause before executing.
-DELETE FROM %s
-WHERE /* Add your condition here, e.g., id = 1 */;]],
-				table_name,
-				table_name
-			)
-		end
+	if script_type == "table_drop" or script_type == "table_delete_records" then
+		return string.format("-- %s for %s\n%s", script_type, table_name,
+			generate_metadata_query(connection, table_name, script_type))
 	elseif script_type == "table_create" or script_type == "table_update" then
 		-- For CREATE and UPDATE, we need to execute a metadata query and extract the result
 		local query = generate_metadata_query(connection, table_name, script_type)
@@ -3043,6 +2924,7 @@ end
 local function create_script_buffer(connection, script, context)
 	-- Create tmp file
 	local tmp_dir = get_connection_tmp_dir(connection)
+	context = context:gsub('[^%w._-]', '_')
 	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%m%d%H%M%S"), context)
 
 	-- Write script to file
@@ -3557,6 +3439,7 @@ function M.start()
 	-- Use current tab for workspace (no new tab creation)
 	explorer_tab = vim.api.nvim_get_current_tabpage()
 	workspace_initialized = true
+	workspace_autocmd_group = vim.api.nvim_create_augroup("EnhanceExplorerWorkspace", { clear = true })
 
 	-- Flag to track if we're doing an auto-save (to prevent triggering BufWriteCmd)
 	local is_auto_saving = false
@@ -3588,6 +3471,7 @@ function M.start()
 
 	-- Set up autocmd to auto-save tmp buffers when leaving them
 	vim.api.nvim_create_autocmd({ "BufLeave", "BufWinLeave" }, {
+		group = workspace_autocmd_group,
 		pattern = "*/enhance.nvim/*/tmp/*.sql",
 		callback = function(args)
 			auto_save_tmp_buffer(args.buf)
@@ -3597,6 +3481,7 @@ function M.start()
 
 	-- Set up autocmd to auto-save tmp buffer before quitting (fires before :q check)
 	vim.api.nvim_create_autocmd("QuitPre", {
+		group = workspace_autocmd_group,
 		callback = function()
 			local bufnr = vim.api.nvim_get_current_buf()
 			local filepath = vim.api.nvim_buf_get_name(bufnr)
@@ -3627,6 +3512,7 @@ function M.start()
 
 	-- Set up autocmd to auto-save all tmp buffers before quitting Neovim
 	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = workspace_autocmd_group,
 		callback = function()
 			save_all_tmp_buffers()
 		end,
@@ -3638,6 +3524,7 @@ function M.start()
 
 	-- Configure tmp buffers to prevent prompts and warnings
 	vim.api.nvim_create_autocmd("BufEnter", {
+		group = workspace_autocmd_group,
 		pattern = "*/enhance.nvim/*/tmp/*.sql",
 		callback = function()
 			vim.opt_local.confirm = false  -- Disable overwrite confirmation prompts
@@ -3648,6 +3535,7 @@ function M.start()
 
 	-- Configure saved query buffers to show save confirmation on :qa
 	vim.api.nvim_create_autocmd("BufEnter", {
+		group = workspace_autocmd_group,
 		pattern = "*/enhance.nvim/*/queries/*.sql",
 		callback = function()
 			vim.opt_local.confirm = true  -- Show "Save changes?" dialog on :qa
@@ -3658,6 +3546,7 @@ function M.start()
 	-- Set up autocmd to handle manual saving tmp buffers (prompts to save to queries/)
 	-- Use BufWriteCmd to completely override the write behavior
 	vim.api.nvim_create_autocmd("BufWriteCmd", {
+		group = workspace_autocmd_group,
 		pattern = "*/enhance.nvim/*/tmp/*.sql",
 		callback = function(args)
 			-- Skip if this is an auto-save (let it proceed normally)
@@ -3672,6 +3561,7 @@ function M.start()
 
 	-- Set up autocmd to clean up buffer tracking when buffers are deleted
 	vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+		group = workspace_autocmd_group,
 		callback = function(args)
 			remove_buffer_from_tracking(args.buf)
 		end,
@@ -3812,6 +3702,7 @@ function M.start()
 	query_editor_win = vim.api.nvim_get_current_win()
 
 	if is_empty_buffer then
+		initial_editor_buf = initial_buf
 		require("enhance.landing").show_welcome(query_editor_win)
 	end
 
@@ -4110,37 +4001,49 @@ function M.toggle()
 	end
 end
 
----Stop enhance workspace (cleanup all buffers)
+---Stop enhance workspace without closing the user's tab or query buffers.
 function M.stop()
 	if not workspace_initialized then
 		vim.notify("Enhance workspace not started", vim.log.levels.WARN)
 		return
 	end
 
-	-- Close explorer
-	M.close()
-
-	-- Close the enhance tab (force close without saving)
-	if explorer_tab and vim.api.nvim_tabpage_is_valid(explorer_tab) then
-		-- Switch to the enhance tab first
-		vim.api.nvim_set_current_tabpage(explorer_tab)
-		-- Force close the tab
-		vim.cmd("tabclose!")
+	-- These splits were created by Enhance; the editor window and tab existed beforehand.
+	-- Do not switch tabs or discard a modified query just to stop the workspace.
+	if results_win and vim.api.nvim_win_is_valid(results_win)
+		and vim.api.nvim_win_get_tabpage(results_win) == explorer_tab
+		and not vim.bo[vim.api.nvim_win_get_buf(results_win)].modified then
+		vim.api.nvim_win_close(results_win, false)
+	end
+	if explorer_win and vim.api.nvim_win_is_valid(explorer_win)
+		and vim.api.nvim_win_get_tabpage(explorer_win) == explorer_tab
+		and not vim.bo[vim.api.nvim_win_get_buf(explorer_win)].modified then
+		vim.api.nvim_win_close(explorer_win, false)
+	end
+	if initial_editor_buf and vim.api.nvim_buf_is_valid(initial_editor_buf)
+		and query_editor_win and vim.api.nvim_win_is_valid(query_editor_win)
+		and require("enhance.landing").is_landing(vim.api.nvim_win_get_buf(query_editor_win)) then
+		vim.api.nvim_win_set_buf(query_editor_win, initial_editor_buf)
+	end
+	if workspace_autocmd_group then
+		vim.api.nvim_clear_autocmds({ group = workspace_autocmd_group })
+		workspace_autocmd_group = nil
 	end
 	for _, buf in pairs(dashboard_buffers) do
-		if vim.api.nvim_buf_is_valid(buf) then
-			vim.api.nvim_buf_delete(buf, { force = true })
+		if vim.api.nvim_buf_is_valid(buf) and not vim.bo[buf].modified then
+			pcall(vim.api.nvim_buf_delete, buf, { force = false })
 		end
 	end
 	for _, buf in pairs(table_dashboard_buffers) do
-		if vim.api.nvim_buf_is_valid(buf) then
-			vim.api.nvim_buf_delete(buf, { force = true })
+		if vim.api.nvim_buf_is_valid(buf) and not vim.bo[buf].modified then
+			pcall(vim.api.nvim_buf_delete, buf, { force = false })
 		end
 	end
 
 	-- Reset state
 	workspace_initialized = false
 	explorer_tab = nil
+	initial_editor_buf = nil
 	explorer_buf = nil
 	query_editor_win = nil
 	results_win = nil
@@ -4565,6 +4468,12 @@ end
 
 -- Expose for testing
 M._build_explorer_content = build_explorer_content
+M._fetch_tables = fetch_tables
+M._execute_query_for_script = execute_query_for_script
+M._generate_metadata_query = generate_metadata_query
+M._generate_table_script = generate_table_script
+M._generate_object_script = generate_object_script
+M._fetch_definition_script = fetch_definition_script
 M._get_db_icon = get_db_icon
 M._get_node_icon = get_node_icon
 M._parse_line = parse_line

@@ -10,10 +10,10 @@ M.supports_debatch = false
 ---Options for building a psql CLI command
 ---@class PsqlCmdOptions
 ---@field query string SQL statement to pass via -c flag
+---@field flags? string[] Output formatting flags placed before -c
 
 ---Build a psql command array for a PostgreSQL connection.
----Note: password is handled via PGPASSWORD env var, not as a flag.
----`test_connection` and `execute_single` manage PGPASSWORD set/clear around each call.
+---Password is supplied only to the child process through PGPASSWORD.
 ---@param connection table PostgreSQL connection
 ---@param opts PsqlCmdOptions
 ---@return string[] Command array ready for vim.fn.system / vim.fn.jobstart
@@ -34,12 +34,13 @@ function M.build_cmd(connection, opts)
     table.insert(cmd, connection.user or connection.username)
   end
 
-  -- No password flag: use PGPASSWORD env var (set by caller)
+  -- No password flag: the CLI runner supplies child-only PGPASSWORD.
   -- Add -w to prevent interactive password prompt when no password configured
   if not connection.password then
     table.insert(cmd, "-w")
   end
 
+  for _, flag in ipairs(opts.flags or {}) do table.insert(cmd, flag) end
   table.insert(cmd, "-c")
   table.insert(cmd, opts.query)
 
@@ -67,17 +68,8 @@ end
 ---@return boolean success
 ---@return string? error_msg
 function M.test_connection(connection)
-  if connection.password then
-    vim.fn.setenv("PGPASSWORD", connection.password)
-  end
-
   local cmd = M.build_cmd(connection, { query = "SELECT 1;" })
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
-
-  if connection.password then
-    vim.fn.setenv("PGPASSWORD", nil)
-  end
+  local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, 'postgresql')
 
   if exit_code ~= 0 then
     return false, "Failed to connect to PostgreSQL: " .. output
@@ -145,7 +137,6 @@ M.grammar = {
 
 ---Execute a single PostgreSQL statement synchronously.
 ---PostgreSQL does not currently support debatch mode; this is a contract stub.
----Manages PGPASSWORD env var for the duration of the call.
 ---@param connection table PostgreSQL connection
 ---@param statement_text string Single SQL statement
 ---@return table|nil parsed_result

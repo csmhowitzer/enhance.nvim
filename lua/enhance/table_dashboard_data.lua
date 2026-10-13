@@ -6,7 +6,7 @@ local function literal(value)
 end
 
 local function table_id(name)
-  local schema, bare = name:match('^([^.]+)%.(.+)$')
+  local schema, bare = require('enhance.db.object_identity').parts(name, 'sqlserver')
   local condition = schema and 'SCHEMA_NAME(t.schema_id) = ' .. literal(schema)
     .. ' AND t.name = ' .. literal(bare) or 't.name = ' .. literal(name)
   return '(SELECT TOP (1) t.object_id FROM sys.tables AS t WHERE t.is_ms_shipped = 0 AND '
@@ -20,6 +20,7 @@ local function run(connection, query, callback, definition)
   table.insert(cmd, #cmd - 1, definition and '65535' or '4096')
   local output, errors = {}, {}
   local job = vim.fn.jobstart(cmd, {
+    env = require('enhance.db.cli_credentials').env(connection, 'sqlserver'),
     stdout_buffered = true,
     on_stdout = function(_, lines)
       for _, line in ipairs(lines or {}) do output[#output + 1] = line end
@@ -145,8 +146,7 @@ end
 ---@param name string
 ---@return table[]
 function M.saved_references(paths, name)
-  local schema, bare = name:match('^([^.]+)%.(.+)$')
-  bare = bare or name
+  local schema, bare = require('enhance.db.object_identity').parts(name, 'sqlserver')
   local refs = {}
   for _, path in ipairs(paths) do
     local ok, lines = pcall(vim.fn.readfile, path)

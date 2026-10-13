@@ -2,7 +2,7 @@
 
 ## Purpose
 - Maintainer procedure for shipping pinned SQL Server/MySQL and PostgreSQL executables with zero user-side compilation, SDK/runtime installation, PATH changes, or helper configuration.
-- All three structured query paths passed C03 live acceptance. `helper-v1.1.1` publishes the two helper families for Ubuntu 24.04 Linux x64/ARM64. Actual AL WSL2 installation remains to be checked; public macOS support is deferred. CLI tools are still needed for probes/completion/explorer/catalog operations.
+- All three structured query paths passed C03 live acceptance. `helper-v1.1.1` publishes the two helper families for Ubuntu 24.04 Linux x64/ARM64. The user reports AL's actual WSL2 GitHub/lazy.nvim installation, update, offline reuse, and read-only queries working; public macOS support is deferred. CLI tools are still needed for probes/completion/explorer/catalog operations.
 
 ## Installer Contract
 - `~/plugins/enhance.nvim/build.lua` is automatically discovered by lazy.nvim when the user's spec has no explicit `build` hook. It loads the installer by filename, independently of runtimepath.
@@ -46,7 +46,7 @@ python3 scripts/package-helper.py \
 ## Publish and Pin
 - Publishing and repository changes remain user-controlled. The `helper-v1.1.1` GitHub release contains four Linux assets: main and PostgreSQL helpers for x64/ARM64. Treat published assets as immutable: never replace them under the same tag; issue a new helper version instead.
 - The two checked-in manifests pin only those four assets by exact SHA-256. Public HTTPS downloads of all four matched the candidate package checksums. The release tag alone does not update existing plugin checkouts: publish the reviewed manifest changes before testing `:Lazy update` on AL.
-- Before claiming a public installation works, verify lazy.nvim installation/update, cached offline reuse, and real read-only AL WSL2 queries. Run `nvt ~/plugins/enhance.nvim` for the ordinary offline suite.
+- AL's public GitHub/lazy.nvim installation/update, cached offline reuse, and read-only WSL2 queries were reported working by the user on 2026-10-13. Run `nvt ~/plugins/enhance.nvim` for the ordinary offline suite when changing the plugin.
 - Maintain runtime security updates by rebuilding and issuing new pinned helper releases. A self-contained helper does not inherit system .NET patches.
 
 ## Failure and Recovery
@@ -63,4 +63,4 @@ python3 scripts/package-helper.py \
 - Clean Ubuntu images used only apt-provided libicu74, ca-certificates, libssl3t64, and libgssapi-krb5-2, plus their normal dependencies. No SDK/runtime/compiler was installed. The user's minimal-Ubuntu check reproduced an ICU abort; installing libicu74 restored structured invalid_request responses. This is the tested library set, not proof that every listed package is independently necessary. Public setup also needs curl for downloads and Ubuntu's standard sha256sum. Do not ask end-users to install .NET/Go or silently run apt/sudo from the plugin installer. User commands are in `~/plugins/enhance.nvim/README.md` and `~/plugins/enhance.nvim/doc/enhance.txt`.
 - The documented GitHub/lazy.nvim specifications now use Enhance as the repository and Dadbod/completion in dependencies. Two failing example checks reproduced the old positional-repository error before correction; `~/plugins/enhance.nvim/tests/installation_examples_spec.lua` verifies the executable Lua examples. No personal credentials/Docker access occurs without explicit test opt-in.
 - Both macOS candidate executables passed codesign --verify --strict and checksum verification. Their signatures are ad-hoc, not Developer ID signatures or notarization; this does not establish Gatekeeper behavior on a clean downloaded installation.
-- All four Linux public downloads matched their pinned candidate checksums on ML. Fresh GitHub/lazy.nvim installation/update/offline reuse and actual AL WSL2 behavior remain gates. macOS candidates are deferred: they run locally and pass strict code-signature verification but have ad-hoc signatures rejected by `spctl`; clean public macOS download behavior has not been verified. No agent git or publication operation was performed.
+- All four Linux public downloads matched their pinned candidate checksums on ML. The user reports successful fresh GitHub/lazy.nvim installation, update, offline cached reuse, and read-only queries on actual AL WSL2; the exact AL Ubuntu version and CPU were not provided here. macOS candidates are deferred: they run locally and pass strict code-signature verification but have ad-hoc signatures rejected by `spctl`; clean public macOS download behavior has not been verified. No agent git or publication operation was performed.

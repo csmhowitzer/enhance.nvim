@@ -90,11 +90,11 @@ describe("enhance.db.mysql build_cmd", function()
     assert.is_true(found)
   end)
 
-  it("appends -p<password> with no space", function()
+  it("does not put the password in argv", function()
     local cmd = adapter.build_cmd(base, { query = "SELECT 1;" })
     local found = false
     for _, v in ipairs(cmd) do if v == "-psecret" then found = true end end
-    assert.is_true(found)
+    assert.is_false(found)
   end)
 
   it("omits -h when host is not set", function()

@@ -1,7 +1,7 @@
 describe('enhance landing page', function()
   local explorer
   local original_test_connection
-  local original_system, original_pin_list, original_pin_toggle
+  local original_system, original_cli_system, original_pin_list, original_pin_toggle
   local original_dashboard_fetches
   local original_table_fetches
   local original_setreg
@@ -12,6 +12,7 @@ describe('enhance landing page', function()
     explorer = require('enhance.explorer')
     original_test_connection = require('enhance.executor').test_connection
     original_system = vim.fn.system
+    original_cli_system = require('enhance.db.cli_credentials').system
     local pins = require('enhance.dashboard_pins')
     original_pin_list, original_pin_toggle = pins.list, pins.toggle
     local data = require('enhance.dashboard_data')
@@ -25,6 +26,7 @@ describe('enhance landing page', function()
     if original_setreg then vim.fn.setreg = original_setreg; original_setreg = nil end
     require('enhance.executor').test_connection = original_test_connection
     vim.fn.system = original_system
+    require('enhance.db.cli_credentials').system = original_cli_system
     local pins = require('enhance.dashboard_pins')
     pins.list, pins.toggle = original_pin_list, original_pin_toggle
     local data = require('enhance.dashboard_data')
@@ -219,6 +221,20 @@ describe('enhance landing page', function()
     assert.is_true(text:find('Artists', 1, true) < text:find('dbo.Archive', 1, true))
   end)
 
+  it('keeps schema-qualified pinned dashboard metrics distinct for dotted names', function()
+    local names = { '[a.b].[Artists]', '[a].[b.Artists]' }
+    local buf = require('enhance.landing').show_dashboard(vim.api.nvim_get_current_win(),
+      { name = 'Demo', type = 'sqlserver', database = 'demo' }, {}, 0, {}, nil, names,
+      { { name = names[1], count = 1111 }, { name = names[2], count = 2222 } },
+      { { name = names[1], columns = 11, indexes = 1, data_kb = 1024 },
+        { name = names[2], columns = 22, indexes = 2, data_kb = 2048 } })
+    local text = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n')
+    assert.is_not_nil(text:find('1,111', 1, true))
+    assert.is_not_nil(text:find('2,222', 1, true))
+    assert.is_not_nil(text:find('[a.b].[Artists]', 1, true))
+    assert.is_not_nil(text:find('[a].[b.Artists]', 1, true))
+  end)
+
   it('draws spaced bars for alphabetical pins, independent of top-eight ranking', function()
     local win = vim.api.nvim_get_current_win()
     local buf = require('enhance.landing').show_dashboard(win,
@@ -400,6 +416,7 @@ describe('enhance landing page', function()
     require('enhance.connections').setup({ conn })
     require('enhance.executor').test_connection = function() return true end
     vim.fn.system = function() return 'Artists\nAlbums\n' end
+    require('enhance.db.cli_credentials').system = function() return 'Artists\nAlbums\n', 0 end
     local pins = require('enhance.dashboard_pins')
     local names = {}
     pins.list = function() return vim.deepcopy(names) end
@@ -615,6 +632,7 @@ describe('enhance landing page', function()
     local conn = { name = 'Table dashboard menu', type = 'sqlserver', server = 'local', database = 'demo' }
     require('enhance.connections').setup({ conn })
     vim.fn.system = function() return 'Artists\nAlbums\n' end
+    require('enhance.db.cli_credentials').system = function() return 'Artists\nAlbums\n', 0 end
     local data = require('enhance.dashboard_data')
     data.fetch_sqlserver_rows = function() end
     data.fetch_database_size = function() end

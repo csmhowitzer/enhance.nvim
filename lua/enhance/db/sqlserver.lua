@@ -34,10 +34,6 @@ function M.build_cmd(connection, opts)
   if connection.user or connection.username then
     table.insert(cmd, "-U")
     table.insert(cmd, connection.user or connection.username)
-    if connection.password then
-      table.insert(cmd, "-P")
-      table.insert(cmd, connection.password)
-    end
   else
     table.insert(cmd, "-E") -- Windows Authentication
   end
@@ -108,10 +104,10 @@ end
 ---@return string[]? column_types
 function M.describe_columns(connection, query, column_count)
   if not column_count or column_count == 0 then return nil end
-  local output = vim.fn.system(M.build_cmd(connection, {
+  local output, exit_code = require('enhance.db.cli_credentials').system(M.build_cmd(connection, {
     query = describe_sql(query), metadata = true, no_headers = true,
-  }))
-  if vim.v.shell_error ~= 0 or M.has_error(vim.split(output, "\n")) then return nil end
+  }), connection, 'sqlserver')
+  if exit_code ~= 0 or M.has_error(vim.split(output, "\n")) then return nil end
   return parse_column_types(output, column_count)
 end
 
@@ -142,8 +138,8 @@ end
 ---@return string? error_msg
 function M.test_connection(connection)
   local cmd = M.build_cmd(connection, { query = "SELECT 1;", format = false, no_headers = true })
-  local output = vim.fn.system(cmd)
-  if vim.v.shell_error ~= 0 then
+  local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, 'sqlserver')
+  if exit_code ~= 0 then
     return false, "Failed to connect to SQL Server: " .. output
   end
   return true, nil
@@ -256,8 +252,7 @@ function M.execute_single(connection, statement_text)
   local start_time = vim.loop.hrtime()
   local cmd = M.build_cmd(connection, { query = statement_text })
 
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
+  local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, 'sqlserver')
   local duration = (vim.loop.hrtime() - start_time) / 1000000 -- ms
 
   local output_lines = {}

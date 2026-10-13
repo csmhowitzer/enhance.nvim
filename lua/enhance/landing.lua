@@ -161,10 +161,14 @@ local function pinned_tables(names, rows, width, chart)
   if #names == 0 then return { 'Pin a table in explorer with <leader>dp' } end
   local body = {}
   local estimates = {}
+  local identity = require('enhance.db.object_identity')
   for _, row in ipairs(type(rows) == 'table' and rows or {}) do
     estimates[row.name] = row.count
-    local bare_name = row.name:match('^[^.]+%.(.+)$')
-    if bare_name then estimates[bare_name] = (estimates[bare_name] or 0) + row.count end
+    local schema, bare = identity.parts(row.name, 'sqlserver')
+    if schema then
+      estimates[identity.label(schema, bare, 'sqlserver')] = row.count
+      estimates[bare] = (estimates[bare] or 0) + row.count
+    end
   end
   for i, name in ipairs(names) do
     if chart then
@@ -191,10 +195,12 @@ end
 ---Keep bare explorer names usable even though SQL Server returns schema names.
 local function detail_lookup(rows)
   local lookup = {}
+  local identity = require('enhance.db.object_identity')
   for _, row in ipairs(type(rows) == 'table' and rows or {}) do
     lookup[row.name] = row
-    local bare = row.name:match('^[^.]+%.(.+)$')
-    if bare then
+    local schema, bare = identity.parts(row.name, 'sqlserver')
+    if schema then
+      lookup[identity.label(schema, bare, 'sqlserver')] = row
       local combined = lookup[bare] or { columns = 0, indexes = 0, data_kb = 0 }
       for _, field in ipairs({ 'columns', 'indexes', 'data_kb' }) do
         combined[field] = combined[field] + row[field]

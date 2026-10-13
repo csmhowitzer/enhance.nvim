@@ -33,6 +33,24 @@ describe('enhance dashboard SQL Server estimates', function()
     assert.same({ { name = 'dbo.Artists', count = 1200 }, { name = 'dbo.Albums', count = 350 } }, received)
   end)
 
+  it('isolates concurrent dashboard credentials from argv and the parent', function()
+    local parent = vim.env.SQLCMDPASSWORD
+    local launches = {}
+    vim.fn.jobstart = function(cmd, opts)
+      launches[#launches + 1] = { cmd = cmd, env = opts.env }
+      return #launches
+    end
+    for _, password in ipairs({ 'first-private', 'second-private' }) do
+      data.fetch_sqlserver_rows({ server = 'local', database = 'demo', user = 'sa', password = password }, function() end)
+    end
+    assert.equals('first-private', launches[1].env.SQLCMDPASSWORD)
+    assert.equals('second-private', launches[2].env.SQLCMDPASSWORD)
+    for _, launch in ipairs(launches) do
+      for _, arg in ipairs(launch.cmd) do assert.is_nil(arg:find('private', 1, true)) end
+    end
+    assert.equals(parent, vim.env.SQLCMDPASSWORD)
+  end)
+
   it('keeps the dashboard usable when metadata cannot be retrieved', function()
     local called = false
     vim.fn.jobstart = function(_, opts)
@@ -73,7 +91,7 @@ describe('enhance dashboard SQL Server estimates', function()
     vim.fn.jobstart = function(cmd, opts)
       local query = cmd[#cmd]
       assert.is_not_nil(query:find("t.name IN (N'Artists')", 1, true))
-      assert.is_not_nil(query:find("N'dbo.O''Brien'", 1, true))
+      assert.is_not_nil(query:find("SCHEMA_NAME(t.schema_id) = N'dbo' AND t.name = N'O''Brien'", 1, true))
       assert.is_nil(query:find('TOP (8)', 1, true))
       opts.on_stdout(nil, { 'dbo.Artists|210', "dbo.O'Brien|75" })
       opts.on_exit(nil, 0)
@@ -83,6 +101,21 @@ describe('enhance dashboard SQL Server estimates', function()
       { 'Artists', "dbo.O'Brien" }, function(rows) received = rows end)
     assert.is_true(vim.wait(200, function() return received ~= nil end, 10))
     assert.same({ { name = 'dbo.Artists', count = 210 }, { name = "dbo.O'Brien", count = 75 } }, received)
+  end)
+
+  it('matches pinned quoted schema and table components without confusing dots or apostrophes', function()
+    local received
+    vim.fn.jobstart = function(cmd, opts)
+      local query = cmd[#cmd]
+      assert.is_not_nil(query:find("SCHEMA_NAME(t.schema_id) = N'a.b' AND t.name = N'O''Brien'", 1, true))
+      assert.is_not_nil(query:find("SCHEMA_NAME(t.schema_id) = N'a' AND t.name = N'b.O''Brien'", 1, true))
+      opts.on_stdout(nil, {})
+      opts.on_exit(nil, 0)
+      return 1
+    end
+    data.fetch_pinned_rows({ type = 'sqlserver', server = 'local', database = 'demo' },
+      { "[a.b].[O'Brien]", "[a].[b.O'Brien]" }, function(rows) received = rows end)
+    assert.is_true(vim.wait(200, function() return received ~= nil end, 10))
   end)
 
   it('fetches columns, real indexes, and allocated data size for pinned tables in one query', function()
@@ -95,7 +128,7 @@ describe('enhance dashboard SQL Server estimates', function()
       assert.is_not_nil(query:find('sys.allocation_units', 1, true))
       assert.is_not_nil(query:find('p.index_id IN (0, 1)', 1, true))
       assert.is_not_nil(query:find("t.name IN (N'Artists')", 1, true))
-      assert.is_not_nil(query:find("N'dbo.O''Brien'", 1, true))
+      assert.is_not_nil(query:find("SCHEMA_NAME(t.schema_id) = N'dbo' AND t.name = N'O''Brien'", 1, true))
       opts.on_stdout(nil, { 'dbo.Artists|12|3|2048', "dbo.O'Brien|0|0|0", '(2 rows affected)' })
       opts.on_exit(nil, 0)
       return 1

@@ -10,6 +10,7 @@ M.supports_debatch = false
 ---Options for building a mysql CLI command
 ---@class MysqlCmdOptions
 ---@field query string SQL statement to pass via -e flag
+---@field flags? string[] Output formatting flags placed before -e
 
 ---Build a mysql command array for a MySQL/MariaDB connection.
 ---@param connection table MySQL connection
@@ -33,15 +34,11 @@ function M.build_cmd(connection, opts)
     table.insert(cmd, connection.user or connection.username)
   end
 
-  if connection.password then
-    -- mysql expects -p<password> with no space
-    table.insert(cmd, "-p" .. connection.password)
-  end
-
   if connection.database then
     table.insert(cmd, connection.database)
   end
 
+  for _, flag in ipairs(opts.flags or {}) do table.insert(cmd, flag) end
   table.insert(cmd, "-e")
   table.insert(cmd, opts.query)
 
@@ -69,8 +66,8 @@ end
 ---@return string? error_msg
 function M.test_connection(connection)
   local cmd = M.build_cmd(connection, { query = "SELECT 1;" })
-  local output = vim.fn.system(cmd)
-  if vim.v.shell_error ~= 0 then
+  local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, 'mysql')
+  if exit_code ~= 0 then
     return false, "Failed to connect to MySQL: " .. output
   end
   return true, nil

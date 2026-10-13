@@ -147,7 +147,7 @@ function M.check()
   
   local commands = {
     "EnhanceToggle",
-    "EnhanceConnect",
+    "EnhanceStart",
   }
   
   for _, cmd in ipairs(commands) do

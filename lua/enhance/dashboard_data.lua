@@ -39,6 +39,7 @@ local function fetch_rows(connection, query, callback, parse)
 
   local output, errors = {}, {}
   local job = vim.fn.jobstart(cmd, {
+    env = require('enhance.db.cli_credentials').env(connection, 'sqlserver'),
     stdout_buffered = true,
     on_stdout = function(_, lines)
       for _, line in ipairs(lines or {}) do
@@ -94,19 +95,22 @@ end
 ---@param names string[]
 ---@return string
 local function pinned_condition(names)
-  local literals = {}
+  local conditions = {}
   local short_literals = {}
+  local identity = require('enhance.db.object_identity')
   for _, name in ipairs(names) do
-    literals[#literals + 1] = "N'" .. name:gsub("'", "''") .. "'"
-    if not name:find('.', 1, true) then
-      short_literals[#short_literals + 1] = "N'" .. name:gsub("'", "''") .. "'"
+    local schema, bare = identity.parts(name, 'sqlserver')
+    if schema then
+      conditions[#conditions + 1] = '(SCHEMA_NAME(t.schema_id) = ' .. identity.literal(schema, 'sqlserver')
+        .. ' AND t.name = ' .. identity.literal(bare, 'sqlserver') .. ')'
+    else
+      short_literals[#short_literals + 1] = identity.literal(bare, 'sqlserver')
     end
   end
-  local condition = "SCHEMA_NAME(t.schema_id) + '.' + t.name IN (" .. table.concat(literals, ', ') .. ')'
   if #short_literals > 0 then
-    condition = '(' .. condition .. ' OR t.name IN (' .. table.concat(short_literals, ', ') .. '))'
+    conditions[#conditions + 1] = 't.name IN (' .. table.concat(short_literals, ', ') .. ')'
   end
-  return condition
+  return '(' .. table.concat(conditions, ' OR ') .. ')'
 end
 
 ---Fetch catalog estimates for up to eight pinned SQL Server tables.
@@ -116,7 +120,7 @@ end
 function M.fetch_pinned_rows(connection, names, callback)
   if #names == 0 then callback({}); return end
   local query = [[
-SELECT SCHEMA_NAME(t.schema_id) + '.' + t.name AS table_name,
+SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) AS table_name,
        SUM(p.rows) AS estimated_rows
 FROM sys.tables AS t
 JOIN sys.partitions AS p ON p.object_id = t.object_id AND p.index_id IN (0, 1)
@@ -152,7 +156,7 @@ end
 function M.fetch_pinned_details(connection, names, callback)
   if #names == 0 then callback({}); return end
   local query = [[
-SELECT SCHEMA_NAME(t.schema_id) + '.' + t.name AS table_name,
+SELECT QUOTENAME(SCHEMA_NAME(t.schema_id)) + '.' + QUOTENAME(t.name) AS table_name,
        (SELECT COUNT(*) FROM sys.columns AS c WHERE c.object_id = t.object_id) AS column_count,
        (SELECT COUNT(*) FROM sys.indexes AS i
         WHERE i.object_id = t.object_id AND i.index_id > 0 AND i.is_hypothetical = 0) AS index_count,

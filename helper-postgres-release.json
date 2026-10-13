@@ -1,6 +1,15 @@
 {
   "schema": 1,
   "helper": "postgres",
-  "release": false,
-  "artifacts": {}
+  "release": "helper-v1.1.1",
+  "artifacts": {
+    "linux-arm64": {
+      "name": "enhance-helper-postgres-linux-arm64",
+      "sha256": "aeb7b2ae1bcc67acfa5d6881b225aa1fd367d0a7dffbb01dc8ff468d968f7090"
+    },
+    "linux-x64": {
+      "name": "enhance-helper-postgres-linux-x64",
+      "sha256": "704086967e0bb3d9819c57a1ccafd245c2cb3af5625346c0a35193dd7b39a2ca"
+    }
+  }
 }

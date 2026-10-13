@@ -6,7 +6,9 @@
 :EnhanceStop	enhance.txt	/*:EnhanceStop*
 :EnhanceToggle	enhance.txt	/*:EnhanceToggle*
 enhance-commands	enhance.txt	/*enhance-commands*
+enhance-completion	enhance.txt	/*enhance-completion*
 enhance-config-connections	enhance.txt	/*enhance-config-connections*
+enhance-config-dashboard-border	enhance.txt	/*enhance-config-dashboard-border*
 enhance-config-enabled	enhance.txt	/*enhance-config-enabled*
 enhance-configuration	enhance.txt	/*enhance-configuration*
 enhance-contents	enhance.txt	/*enhance-contents*
@@ -18,10 +20,13 @@ enhance-example-visual	enhance.txt	/*enhance-example-visual*
 enhance-examples	enhance.txt	/*enhance-examples*
 enhance-functions	enhance.txt	/*enhance-functions*
 enhance-health	enhance.txt	/*enhance-health*
+enhance-helper	enhance.txt	/*enhance-helper*
 enhance-installation	enhance.txt	/*enhance-installation*
 enhance-introduction	enhance.txt	/*enhance-introduction*
 enhance-keymaps	enhance.txt	/*enhance-keymaps*
 enhance-keymaps-explorer	enhance.txt	/*enhance-keymaps-explorer*
+enhance-keymaps-json	enhance.txt	/*enhance-keymaps-json*
+enhance-keymaps-landing	enhance.txt	/*enhance-keymaps-landing*
 enhance-keymaps-query	enhance.txt	/*enhance-keymaps-query*
 enhance-keymaps-results	enhance.txt	/*enhance-keymaps-results*
 enhance-mysql	enhance.txt	/*enhance-mysql*

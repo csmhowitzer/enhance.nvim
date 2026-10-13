@@ -30,7 +30,7 @@ Features:
 - File management: tmp buffers, saved queries, result tracking
 - Bulk operations: delete multiple files with visual selection
 - Comprehensive health check diagnostics
-- Production-ready with 252 passing tests
+- Offline regression tests
 
 ==============================================================================
 2. INSTALLATION                                        *enhance-installation*
@@ -73,16 +73,17 @@ See |enhance-database-types| for connection URL formats.
 
 Structured helper packaging                               *enhance-helper*
 
-SQL Server and MySQL/MariaDB use the bundled .NET helper; PostgreSQL uses a
-bundled Go companion. Neither uses a CLI-text fallback. No binary release is
-pinned yet: queries fail until their release is published/pinned and installed.
-CLIs remain required for probes, completion and explorer metadata. SQLite is unchanged.
+SQL Server and MySQL/MariaDB use a self-contained .NET helper; PostgreSQL
+uses a self-contained Go companion. Neither uses a CLI-text fallback. The
+pinned helper-v1.1.1 release supports Ubuntu 24.04 Linux x64/ARM64; public
+macOS and Windows helper assets are not available yet. CLIs remain required
+for probes, completion and explorer metadata. SQLite is unchanged.
 
-When a pinned release is available, lazy.nvim discovers build.lua automatically
-on installation/update. End-users do not install .NET/Go, compile helpers, change
-PATH, or configure a helper path. Installation needs HTTPS access and curl, plus
-shasum (macOS), sha256sum (Linux), or Get-FileHash (Windows PowerShell). Runtime OS
-libraries and authentication prerequisites still apply.
+On supported Linux hosts, lazy.nvim discovers build.lua automatically on
+installation/update (including :Lazy update). End-users do not install .NET/Go,
+compile helpers, change PATH, or configure a helper path. Installation needs
+HTTPS access, curl, and sha256sum. Runtime OS libraries and authentication
+prerequisites still apply.
 
 Ubuntu 24.04 (including WSL2) uses the Linux x64 or ARM64 helper, selected
 automatically. On a minimal installation, standard OS prerequisites are:
@@ -93,7 +94,8 @@ sudo apt install curl ca-certificates libicu74 libssl3t64 libgssapi-krb5-2
 These are Ubuntu libraries/utilities, not .NET/Go SDKs or runtimes. ICU must
 be available even if the helper's version handshake succeeds. The plugin
 never invokes apt or sudo. Database CLIs are still needed for probes,
-completion and explorer metadata. Public releases remain unpublished.
+completion and explorer metadata. No development resolver or separate helper
+install command is required for the pinned Linux release.
 
 The exact release and checksums are shipped with the plugin. The verified helper
 is stored under stdpath('data')/enhance/helper, not the plugin checkout. Queries,

@@ -128,8 +128,8 @@ return {
 
 ### Structured Query Helpers
 
-- SQL Server and MySQL/MariaDB queries use the bundled .NET helper; PostgreSQL uses a bundled Go companion. There is no CLI-table/text fallback. **The checked-in releases are still unpublished, so queries report a missing-helper error until immutable releases are published and pinned.** The existing CLIs remain required for connection probes, completion, and explorer/catalog operations; SQLite execution is unchanged.
-- Once the release manifests are populated, lazy.nvim automatically runs the plugin's `build.lua` during installation/update. No .NET/Go installation, compilation, PATH change, or helper-path configuration is needed.
+- SQL Server and MySQL/MariaDB queries use a self-contained .NET helper; PostgreSQL uses a self-contained Go companion. There is no CLI-table/text fallback. **The pinned `helper-v1.1.1` public release currently supports Ubuntu 24.04 Linux x64/ARM64 only; public macOS and Windows helper assets are not available yet.** The existing CLIs remain required for connection probes, completion, and explorer/catalog operations; SQLite execution is unchanged.
+- On supported Linux hosts, lazy.nvim automatically runs the plugin's `build.lua` during installation/update (including `:Lazy update`) to download and verify both helpers. No .NET/Go SDK or runtime installation, compilation, PATH change, or helper-path configuration is needed.
 - MySQL/PostgreSQL accept `ssl_mode`: `disable`, `prefer` (default, matching typical CLI behavior), `require`, `verify-ca`, or `verify-full`. `prefer` may connect without TLS and does not guarantee certificate validation; choose `verify-full` for authenticated TLS. PostgreSQL requires an explicit user/username; helper execution does not inherit PG environment/service/password files. Custom TLS certificate files and GSS authentication are not currently exposed by this helper configuration.
 - Helpers execute server SQL, not client scripting: SQLCMD GO/directives, mysql DELIMITER/source commands, psql backslash commands, and PostgreSQL COPY STDIN/STDOUT/replication streams are unsupported. Unsupported COPY responses fail explicitly rather than discarding data. A connection lasts for one execution; cross-execution transactions/session state are not supported.
 - Installation uses HTTPS downloads and the SHA-256 hashes pinned in the plugin checkout. Verified binaries are cached under Neovim's data directory; health checks and path lookup never download anything.
@@ -148,7 +148,7 @@ sudo apt install curl ca-certificates libicu74 libssl3t64 libgssapi-krb5-2
 
 - These are Ubuntu packages, not .NET/Go SDKs or runtimes. ICU is required: without it, the .NET helper can abort even when its version handshake succeeds. The plugin never runs apt or sudo itself.
 - Install the database CLI tools listed above for the databases you use. The exact packages differ on older Ubuntu releases; Ubuntu 24.04 is the initial Linux validation target, not a claim of support for every distribution.
-- Public helper releases are still unpublished. These prerequisites do not bypass the missing-helper release gate or require any development resolver configuration.
+- The pinned Linux helpers download during lazy.nvim installation/update. These prerequisites do not require the development resolver or a separate helper install command.
 
 ### Connections File
 

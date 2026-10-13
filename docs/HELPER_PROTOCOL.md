@@ -1,7 +1,7 @@
 # Structured Helper Protocol
 
 ## Purpose
-- Integration contract for driver-backed SQL Server/MySQL/PostgreSQL query execution. Both checked-in release pins remain unpublished; execution fails explicitly when a verified helper is unavailable.
+- Integration contract for driver-backed SQL Server/MySQL/PostgreSQL query execution. Both checked-in release pins point to helper-v1.1.1 for Ubuntu 24.04 Linux x64/ARM64; execution fails explicitly when a verified helper is unavailable.
 - Implementations: `~/plugins/enhance.nvim/helper/` (.NET SqlClient/MySqlConnector) and `~/plugins/enhance.nvim/helper-postgres/` (Go pgconn/pgproto3). Protocol version: 1. Current source handshake: 1.1.1; the earlier local SQL Server-only binary reports 1.0.0.
 
 ## Process Boundary
@@ -113,6 +113,6 @@
 - SQL authentication and integrated authentication construction are tested without connecting. Live authentication, batch/transaction behavior, row counts, PRINT/error ordering, and actual SqlDataReader metadata require live database verification.
 - Ctrl-C cancellation is passed through to the driver by the helper. The Lua runner uses process termination instead; live server cancellation outcomes remain pending. No cancellation keymap is added by this integration.
 - Lua decoding, NULL-aware consumers, lifecycle, and the public executor-to-subprocess-to-decoder-to-formatter path are tested with a database-free fixture. A self-contained helper invalid-request envelope is also tested without connecting to SQL Server. These are not a substitute for successful live SQL Server authentication/query validation or public-release installation verification.
-- Move to a supported LTS .NET target before public release; current local verification used net8.0/runtime 8.0.31, which reaches end of support on 2026-11-10.
+- The Linux helper-v1.1.1 public release bundles .NET 10 LTS. ML's older local development package still bundles runtime 8.0.31, which reaches end of support on 2026-11-10; end-users do not install either SDK.
 - PostgreSQL sends one native simple Query message unchanged, preserving the server's implicit-transaction/stop-on-error behavior. It uses pgconn's frontend/ReceiveMessage directly so COPY responses can be rejected rather than swallowed by the driver's generic result iterator. MySQL uses one unprepared text command, no parameters/debatching/probes; MySqlConnector still applies its own ordinary parameter lexer and can append a newline to terminate a trailing comment. Do not claim byte-for-byte MySQL wire identity from CommandText assignment alone.
 - Live edge-case scripts: `~/plugins/enhance.nvim/tests/fixtures/c03-sqlserver.sql`, `~/plugins/enhance.nvim/tests/fixtures/c03-mysql.sql`, `~/plugins/enhance.nvim/tests/fixtures/c03-postgres.sql`. User-authorized ML Docker checks passed on 2026-10-09 through the real executor/runner/decoder/formatter, including exact clipboard/popup values and retained earlier results on later errors. C03 is closed. Opt-in regression: `~/plugins/enhance.nvim/tests/c03_live_spec.lua` (ENHANCE_C03_LIVE=1 under nvt); ordinary tests never load personal credentials or contact databases. Additional TLS/authentication modes, live cancellation/rollback, and other platforms are not covered by those read-only checks.

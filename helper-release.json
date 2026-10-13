@@ -1,5 +1,14 @@
 {
   "schema": 1,
-  "release": false,
-  "artifacts": {}
+  "release": "helper-v1.1.1",
+  "artifacts": {
+    "linux-arm64": {
+      "name": "enhance-helper-linux-arm64",
+      "sha256": "ef594a6865563e968fc8fdad9f2413e9d5d25862ecc3544421c09c4c3e16c39e"
+    },
+    "linux-x64": {
+      "name": "enhance-helper-linux-x64",
+      "sha256": "fc51c32180e096008fb5d3dcadb670219e08bcc648a52e259fc2fc108fab358d"
+    }
+  }
 }

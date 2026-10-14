@@ -82,7 +82,7 @@ describe("enhance.bugfixes", function()
       assert.is_true(ok)  -- Should not throw error
       assert.is_nil(result)
       assert.equals(vim.log.levels.ERROR, notification[2])
-      assert.is_truthy(notification[1]:find('Failed to create tmp directory', 1, true))
+      assert.is_truthy(notification[1]:find('Connection name cannot contain', 1, true))
     end)
   end)
 

@@ -36,4 +36,11 @@ describe('enhance dashboard pins', function()
       assert.is_nil(table.concat(lines):find('private', 1, true))
     end
   end)
+
+  it('reports an unsuccessful disk write rather than claiming the pin was saved', function()
+    vim.fn.writefile = function() return -1 end
+    local pinned, err = pins.toggle({ name = 'Pins write error' }, 'dbo.Artists')
+    assert.is_nil(pinned)
+    assert.matches('Could not write', err)
+  end)
 end)

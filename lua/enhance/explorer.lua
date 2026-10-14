@@ -66,6 +66,7 @@ local dashboard_pinned_details = {}
 local dashboard_needs_update = {}
 local dashboard_revision = {}
 local table_dashboard_revision = 0
+local tmp_sequence = 0
 
 ---@type integer? Last results buffer number
 local last_results_buf = nil
@@ -160,53 +161,72 @@ local function find_parent_info(line_num)
 end
 
 ---Get connection-specific tmp directory
+---@param connection table
+---@param kind string
+---@return string? directory
+local function storage_dir(connection, kind)
+  local valid, err = require('enhance.config').validate_storage_name(connection.name)
+  if not valid then
+    vim.notify(err, vim.log.levels.ERROR)
+    return nil
+  end
+  local dir = vim.fn.stdpath('data') .. '/enhance.nvim/' .. connection.name .. '/' .. kind
+  local ok, result = pcall(vim.fn.mkdir, dir, 'p')
+  if not ok or (result ~= 0 and result ~= 1) or vim.fn.isdirectory(dir) ~= 1 then
+    vim.notify('Failed to create Enhance ' .. kind .. ' directory: ' .. dir, vim.log.levels.ERROR)
+    return nil
+  end
+  return dir
+end
+
+---Allocate a unique tmp filename without overwriting disk files or reusing open buffers.
+---@param connection table
+---@param context string
+---@return string? filepath
+local function next_tmp_filename(connection, context)
+  local dir = storage_dir(connection, 'tmp')
+  if not dir then return nil end
+  context = context:gsub('[^%w._-]', '_'):sub(1, 100)
+  local timestamp = os.date('%m%d%H%M%S')
+  for _ = 1, 1000 do
+    tmp_sequence = tmp_sequence + 1
+    local path = string.format('%s/%s-%06d-%s.sql', dir, timestamp, tmp_sequence, context)
+    if not vim.uv.fs_stat(path) and vim.fn.bufnr(path) == -1 then return path end
+  end
+  vim.notify('Could not allocate a unique Enhance tmp filename', vim.log.levels.ERROR)
+  return nil
+end
+
+---Get connection-specific tmp directory
 ---@param connection table Database connection
 ---@return string? tmp_dir Path to tmp directory, or nil on error
 local function get_connection_tmp_dir(connection)
-	local base = vim.fn.stdpath("data") .. "/enhance.nvim"
-	local conn_dir = base .. "/" .. connection.name .. "/tmp"
-
-	local ok, err = pcall(vim.fn.mkdir, conn_dir, "p")
-	if not ok then
-		vim.notify(string.format("Failed to create tmp directory: %s\nError: %s", conn_dir, err), vim.log.levels.ERROR)
-		return nil
-	end
-
-	return conn_dir
+	return storage_dir(connection, 'tmp')
 end
 
 ---Get connection-specific queries directory
 ---@param connection table Database connection
 ---@return string? queries_dir Path to queries directory, or nil on error
 local function get_connection_queries_dir(connection)
-	local base = vim.fn.stdpath("data") .. "/enhance.nvim"
-	local conn_dir = base .. "/" .. connection.name .. "/queries"
-
-	local ok, err = pcall(vim.fn.mkdir, conn_dir, "p")
-	if not ok then
-		vim.notify(
-			string.format("Failed to create queries directory: %s\nError: %s", conn_dir, err),
-			vim.log.levels.ERROR
-		)
-		return nil
-	end
-
-	return conn_dir
+	return storage_dir(connection, 'queries')
 end
 
 ---Check if filepath is in tmp directory
 ---@param filepath string Full path to file
 ---@return boolean is_tmp True if file is in tmp directory
 local function is_tmp_file(filepath)
-	return filepath:match("/tmp/[^/]+%.sql$") ~= nil
+	local root = vim.fn.stdpath('data') .. '/enhance.nvim/'
+	return filepath:sub(1, #root) == root
+		and filepath:sub(#root + 1):match('^[^/]+/tmp/[^/]+%.sql$') ~= nil
 end
 
 ---Extract connection name from tmp filepath
 ---@param filepath string Full path to tmp file
 ---@return string? conn_name Connection name or nil
 local function get_connection_from_tmp_path(filepath)
-	local match = filepath:match("/enhance%.nvim/([^/]+)/tmp/")
-	return match
+	if not is_tmp_file(filepath) then return nil end
+	local root = vim.fn.stdpath('data') .. '/enhance.nvim/'
+	return filepath:sub(#root + 1):match('^([^/]+)/tmp/')
 end
 
 ---Add buffer to tracking for a connection
@@ -349,6 +369,7 @@ local function get_buffers_for_connection(conn_name)
 	end
 
 	local tmp_dir = get_connection_tmp_dir(conn)
+	if not tmp_dir then return {} end
 	local files = vim.fn.glob(tmp_dir .. "/*.sql", false, true)
 
 	-- Start with files on disk
@@ -434,6 +455,7 @@ local function get_saved_queries_for_connection(conn_name)
 	end
 
 	local queries_dir = get_connection_queries_dir(conn)
+	if not queries_dir then return {} end
 	local files = vim.fn.glob(queries_dir .. "/*.sql", false, true)
 
 	local queries = {}
@@ -1613,6 +1635,7 @@ local function find_file_by_name(filename, conn_name)
 
 	-- Search in tmp directory
 	local tmp_dir = get_connection_tmp_dir(conn)
+	if not tmp_dir then return nil end
 	local tmp_files = vim.fn.glob(tmp_dir .. "/*.sql", false, true)
 	for _, filepath in ipairs(tmp_files) do
 		local name = vim.fn.fnamemodify(filepath, ":t")
@@ -1623,6 +1646,7 @@ local function find_file_by_name(filename, conn_name)
 
 	-- Search in queries directory
 	local queries_dir = get_connection_queries_dir(conn)
+	if not queries_dir then return nil end
 	local query_files = vim.fn.glob(queries_dir .. "/*.sql", false, true)
 	for _, filepath in ipairs(query_files) do
 		local name = vim.fn.fnamemodify(filepath, ":t")
@@ -1756,8 +1780,8 @@ local function handle_tmp_buffer_save(bufnr)
 
 	-- Extract default filename from tmp filename
 	local tmp_filename = vim.fn.fnamemodify(filepath, ":t:r") -- Remove path and extension
-	-- Remove timestamp prefix (YYYY-MM-DD-HHMMSS-)
-	local default_name = tmp_filename:gsub("^%d%d%d%d%-%d%d%-%d%d%-%d%d%d%d%d%d%-", "")
+	-- Remove the timestamp and sequence prefix from new tmp filenames.
+	local default_name = tmp_filename:gsub('^%d%d%d%d%d%d%d%d%d%d%-%d+%-', '')
 
 	-- Defer the prompt to avoid focus issues
 	vim.schedule(function()
@@ -1770,6 +1794,11 @@ local function handle_tmp_buffer_save(bufnr)
 				vim.notify("Save cancelled", vim.log.levels.INFO)
 				return
 			end
+			if input == '.' or input == '..' or input:find('/', 1, true)
+				or input:find('\\', 1, true) or input:find('%c') then
+				vim.notify('Query filename must be a single file name', vim.log.levels.ERROR)
+				return
+			end
 
 			-- Ensure .sql extension
 			local filename = input
@@ -1779,6 +1808,7 @@ local function handle_tmp_buffer_save(bufnr)
 
 			-- Get queries directory
 			local queries_dir = get_connection_queries_dir(conn)
+			if not queries_dir then return end
 			local new_filepath = queries_dir .. "/" .. filename
 
 			-- Check if file already exists
@@ -1792,7 +1822,7 @@ local function handle_tmp_buffer_save(bufnr)
 
 			-- Write to new location
 			local write_ok, write_err = pcall(vim.fn.writefile, lines, new_filepath)
-			if not write_ok then
+			if not write_ok or write_err ~= 0 then
 				vim.notify(
 					string.format("Failed to write file: %s\nError: %s", new_filepath, write_err),
 					vim.log.levels.ERROR
@@ -1802,7 +1832,7 @@ local function handle_tmp_buffer_save(bufnr)
 
 			-- Delete old tmp file
 			local delete_ok, delete_err = pcall(vim.fn.delete, filepath)
-			if not delete_ok then
+			if not delete_ok or delete_err ~= 0 then
 				vim.notify(
 					string.format("Warning: Failed to delete tmp file: %s\nError: %s", filepath, delete_err),
 					vim.log.levels.WARN
@@ -2923,9 +2953,8 @@ end
 ---@param context string Context for filename (e.g., "users-create", "products-update")
 local function create_script_buffer(connection, script, context)
 	-- Create tmp file
-	local tmp_dir = get_connection_tmp_dir(connection)
-	context = context:gsub('[^%w._-]', '_')
-	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%m%d%H%M%S"), context)
+	local filename = next_tmp_filename(connection, context)
+	if not filename then return end
 
 	-- Write script to file
 	vim.fn.writefile(vim.split(script, "\n"), filename)
@@ -2960,8 +2989,8 @@ end
 ---@param context string Context for filename (e.g., "users-list", "products-columns")
 local function create_and_execute_query(connection, query, context)
 	-- Create tmp file
-	local tmp_dir = get_connection_tmp_dir(connection)
-	local filename = string.format("%s/%s-%s.sql", tmp_dir, os.date("%m%d%H%M%S"), context)
+	local filename = next_tmp_filename(connection, context)
+	if not filename then return end
 
 	-- Write query to file
 	vim.fn.writefile(vim.split(query, "\n"), filename)
@@ -3299,8 +3328,8 @@ local function handle_enter(line_num)
 					local lines = vim.api.nvim_buf_get_lines(query_buf, 0, -1, false)
 
 					-- Create tmp file
-					local tmp_dir = get_connection_tmp_dir(conn)
-					local filename = string.format("%s/%s-tmp.sql", tmp_dir, os.date("%m%d%H%M%S"))
+					local filename = next_tmp_filename(conn, 'tmp')
+					if not filename then return end
 
 					-- Write content to file
 					vim.fn.writefile(lines, filename)
@@ -3440,9 +3469,8 @@ function M.start()
 	explorer_tab = vim.api.nvim_get_current_tabpage()
 	workspace_initialized = true
 	workspace_autocmd_group = vim.api.nvim_create_augroup("EnhanceExplorerWorkspace", { clear = true })
-
-	-- Flag to track if we're doing an auto-save (to prevent triggering BufWriteCmd)
-	local is_auto_saving = false
+	local tmp_pattern = vim.fn.stdpath('data') .. '/enhance.nvim/*/tmp/*.sql'
+	local saved_pattern = vim.fn.stdpath('data') .. '/enhance.nvim/*/queries/*.sql'
 
 	-- Helper function to auto-save a tmp buffer
 	local function auto_save_tmp_buffer(bufnr)
@@ -3450,29 +3478,24 @@ function M.start()
 		if vim.api.nvim_buf_is_valid(bufnr) and vim.bo[bufnr].modified then
 			local filepath = vim.api.nvim_buf_get_name(bufnr)
 			if filepath and filepath ~= "" and is_tmp_file(filepath) then
-				-- Set flag to indicate auto-save in progress
-				is_auto_saving = true
-
-				-- Use vim.api.nvim_buf_call to write in buffer context
-				-- This properly updates buffer state and prevents "file changed" warnings
-				local ok = pcall(vim.api.nvim_buf_call, bufnr, function()
-					vim.cmd('silent! write!')  -- Use write! to force overwrite
+				-- Bypass only our manual-save BufWriteCmd handler. A normal :write here
+				-- fires BufWriteCmd and never writes the tmp file.
+				local ok, err = pcall(vim.api.nvim_buf_call, bufnr, function()
+					vim.cmd('silent noautocmd write!')
 				end)
-
-				-- Clear flag
-				is_auto_saving = false
-
 				if not ok then
-					vim.notify(string.format("Failed to auto-save tmp buffer: %s", filepath), vim.log.levels.WARN)
+					vim.notify(string.format('Failed to auto-save tmp buffer: %s (%s)', filepath, err), vim.log.levels.WARN)
 				end
+				return ok
 			end
 		end
+		return false
 	end
 
 	-- Set up autocmd to auto-save tmp buffers when leaving them
 	vim.api.nvim_create_autocmd({ "BufLeave", "BufWinLeave" }, {
 		group = workspace_autocmd_group,
-		pattern = "*/enhance.nvim/*/tmp/*.sql",
+		pattern = tmp_pattern,
 		callback = function(args)
 			auto_save_tmp_buffer(args.buf)
 		end,
@@ -3499,8 +3522,7 @@ function M.start()
 			if vim.api.nvim_buf_is_valid(bufnr) then
 				local filepath = vim.api.nvim_buf_get_name(bufnr)
 				if filepath and is_tmp_file(filepath) then
-					auto_save_tmp_buffer(bufnr)
-					saved_count = saved_count + 1
+					if auto_save_tmp_buffer(bufnr) then saved_count = saved_count + 1 end
 				end
 			end
 		end
@@ -3525,7 +3547,7 @@ function M.start()
 	-- Configure tmp buffers to prevent prompts and warnings
 	vim.api.nvim_create_autocmd("BufEnter", {
 		group = workspace_autocmd_group,
-		pattern = "*/enhance.nvim/*/tmp/*.sql",
+		pattern = tmp_pattern,
 		callback = function()
 			vim.opt_local.confirm = false  -- Disable overwrite confirmation prompts
 			vim.opt_local.autoread = true  -- Auto-reload if file changes (prevents W13 warnings)
@@ -3536,7 +3558,7 @@ function M.start()
 	-- Configure saved query buffers to show save confirmation on :qa
 	vim.api.nvim_create_autocmd("BufEnter", {
 		group = workspace_autocmd_group,
-		pattern = "*/enhance.nvim/*/queries/*.sql",
+		pattern = saved_pattern,
 		callback = function()
 			vim.opt_local.confirm = true  -- Show "Save changes?" dialog on :qa
 		end,
@@ -3547,12 +3569,8 @@ function M.start()
 	-- Use BufWriteCmd to completely override the write behavior
 	vim.api.nvim_create_autocmd("BufWriteCmd", {
 		group = workspace_autocmd_group,
-		pattern = "*/enhance.nvim/*/tmp/*.sql",
+		pattern = tmp_pattern,
 		callback = function(args)
-			-- Skip if this is an auto-save (let it proceed normally)
-			if is_auto_saving then
-				return false  -- Allow default write behavior
-			end
 			-- Manual save: show prompt to save to queries/
 			handle_tmp_buffer_save(args.buf)
 		end,
@@ -4189,8 +4207,8 @@ function M.new_query()
 	end
 
 	-- Create tmp file
-	local tmp_dir = get_connection_tmp_dir(active_connection)
-	local filename = string.format("%s/%s-new-query.sql", tmp_dir, os.date("%m%d%H%M%S"))
+	local filename = next_tmp_filename(active_connection, 'new-query')
+	if not filename then return end
 
 	-- Switch to query editor window
 	if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then

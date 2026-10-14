@@ -312,7 +312,8 @@ function M.execute_sqlite(connection, query, query_bufnr)
   local error_lines = {}
 
   -- Pass query as command-line argument
-  vim.fn.jobstart({
+  local timer, finished, timed_out = nil, false, false
+  local job = vim.fn.jobstart({
     'sqlite3',
     db_path,
     '-column',    -- Columnar output
@@ -339,10 +340,12 @@ function M.execute_sqlite(connection, query, query_bufnr)
       end
     end,
     on_exit = function(_, exit_code)
+      finished = true
+      if timer and not timer:is_closing() then timer:stop(); timer:close() end
       local end_time = vim.loop.hrtime()
       local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
 
-      if exit_code == 0 then
+      if exit_code == 0 and not timed_out then
         local row_count = 0
 
         -- For DML statements, extract the changes() result from the last line
@@ -449,7 +452,10 @@ function M.execute_sqlite(connection, query, query_bufnr)
           "Query Execution Failed",
         }
 
-        if #error_lines > 0 then
+        if timed_out then
+          table.insert(error_display, 'SQLite query timed out after '
+            .. require('enhance.db.query_timeout').command_seconds .. ' seconds')
+        elseif #error_lines > 0 then
           for _, err_line in ipairs(error_lines) do
             table.insert(error_display, err_line)
           end
@@ -471,6 +477,13 @@ function M.execute_sqlite(connection, query, query_bufnr)
       end
     end,
   })
+  if job > 0 and not finished then
+    timer = vim.defer_fn(function()
+      if finished then return end
+      timed_out = true
+      vim.fn.jobstop(job)
+    end, require('enhance.db.query_timeout').command_seconds * 1000)
+  end
 end
 
 local sqlserver_queries = {}

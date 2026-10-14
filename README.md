@@ -600,6 +600,7 @@ All databases support:
 - DML/DDL success messages with row counts
 - Error detection and highlighting
 - Auto-refresh on DDL operations
+- A default four-minute command deadline. Structured SQL Server/MySQL/PostgreSQL helpers allow up to 15 additional seconds to connect and five seconds of process grace; SQLite CLI statements and batch jobs use a four-minute deadline. SQLite's explicit per-statement de-batching applies that deadline to each statement.
 
 ## Customization
 

@@ -31,7 +31,7 @@ public sealed record HelperRequest
     public string DbType { get; init; } = "sqlserver";
     public required string Query { get; init; }
     public required ConnectionOptions Connection { get; init; }
-    public int CommandTimeoutSeconds { get; init; } = 30;
+    public int CommandTimeoutSeconds { get; init; } = 240;
 
     public bool IsValid() => Protocol == HelperProtocol.Version && DbType is "sqlserver" or "mysql" && !string.IsNullOrWhiteSpace(Query)
         && Connection is not null && !string.IsNullOrWhiteSpace(Connection.Server)

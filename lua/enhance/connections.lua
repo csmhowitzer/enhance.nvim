@@ -26,8 +26,14 @@ function M.setup(connections_file_or_array)
 
   -- Handle direct connection array (for testing)
   if type(connections_file_or_array) == "table" then
+    local valid, err = require('enhance.config').validate_storage_names(connections_file_or_array)
+    if not valid then
+      connections = {}
+      vim.notify('Invalid connections: ' .. err, vim.log.levels.ERROR)
+      return false
+    end
     connections = connections_file_or_array
-    return
+    return true
   end
 
   -- Load connections from file

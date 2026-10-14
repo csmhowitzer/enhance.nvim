@@ -125,7 +125,7 @@ describe('structured SQL Server adapter boundary', function()
     assert.equals('p;word', value.connection.password)
     assert.is_false(value.connection.trustServerCertificate)
     assert.equals(15, value.connection.connectTimeoutSeconds)
-    assert.equals(30, value.commandTimeoutSeconds)
+    assert.equals(240, value.commandTimeoutSeconds)
   end)
 
   it('keeps integrated authentication and explicit TLS/timeout choices', function()

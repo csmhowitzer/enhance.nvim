@@ -90,7 +90,7 @@ function Runner:run(connection, query, callback, opts)
   opts = opts or {}
   local timeout = opts.process_timeout_ms
   if timeout == nil then
-    timeout = ((opts.connect_timeout_seconds or 15) + (opts.command_timeout_seconds or 30)) * 1000 + 5000
+    timeout = require('enhance.db.query_timeout').process_ms(opts)
   end
   if type(timeout) ~= 'number' or timeout ~= math.floor(timeout) or timeout < 1 or timeout > 90000000 then
     fail('Invalid ' .. label .. ' helper process timeout'); return

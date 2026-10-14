@@ -19,7 +19,8 @@ function M.execute(db, connection, query)
   local resolved, path = pcall(require('enhance.helper_install').path, db)
   if not resolved or not path then return failure('Structured helper unavailable; rebuild enhance.nvim in lazy.nvim') end
   local ok, output = pcall(function()
-    return vim.system({ path }, { stdin = body, text = false, stderr = false, timeout = 50000 }):wait()
+    return vim.system({ path }, { stdin = body, text = false, stderr = false,
+      timeout = require('enhance.db.query_timeout').process_ms() }):wait()
   end)
   if not ok or (output.signal ~= 0 and output.signal ~= nil) then return failure('Structured helper execution failed') end
   local response, decode_error = adapter.decode_response(output.stdout, output.code, db)

@@ -2,6 +2,7 @@
 local M = {}
 
 local function path(connection)
+  if not require('enhance.config').validate_storage_name(connection.name) then return nil end
   return vim.fn.stdpath('data') .. '/enhance.nvim/' .. connection.name .. '/pins.json'
 end
 
@@ -10,8 +11,11 @@ end
 ---@return string[]
 function M.list(connection)
   local filename = path(connection)
+  if not filename then return {} end
   if vim.fn.filereadable(filename) ~= 1 then return {} end
-  local ok, names = pcall(vim.json.decode, table.concat(vim.fn.readfile(filename), '\n'))
+  local read_ok, lines = pcall(vim.fn.readfile, filename)
+  if not read_ok then return {} end
+  local ok, names = pcall(vim.json.decode, table.concat(lines, '\n'))
   if not ok or type(names) ~= 'table' then return {} end
   local result, seen = {}, {}
   for _, name in ipairs(names) do
@@ -54,12 +58,13 @@ function M.toggle(connection, name)
     names[#names + 1] = name
   end
   local filename = path(connection)
+  if not filename then return nil, 'Invalid connection name for dashboard pins' end
   local dir = vim.fn.fnamemodify(filename, ':h')
   if vim.fn.mkdir(dir, 'p') == 0 and vim.fn.isdirectory(dir) ~= 1 then
     return nil, 'Could not create dashboard pins directory'
   end
-  local ok, err = pcall(vim.fn.writefile, { vim.json.encode(names) }, filename)
-  if not ok then return nil, tostring(err) end
+  local ok, result = pcall(vim.fn.writefile, { vim.json.encode(names) }, filename)
+  if not ok or result ~= 0 then return nil, 'Could not write dashboard pins file' end
   return pinned
 end
 

@@ -15,7 +15,7 @@ local M = {}
 
 ---@class EnhanceHelperTimeouts
 ---@field connect_timeout_seconds integer? Default 15; range 1–300
----@field command_timeout_seconds integer? Default 30; range 1–86400
+---@field command_timeout_seconds integer? Default 240; range 1–86400
 
 ---@class EnhanceHelperDiagnostic
 ---@field message string
@@ -86,10 +86,11 @@ function M.encode_request(connection, query, opts)
   if server == nil and db ~= 'sqlserver' then server = 'localhost' end
   local user = connection.user
   if user == nil then user = connection.username end
+  local defaults = require('enhance.db.query_timeout')
   local connect_timeout = opts.connect_timeout_seconds
-  if connect_timeout == nil then connect_timeout = 15 end
+  if connect_timeout == nil then connect_timeout = defaults.connect_seconds end
   local command_timeout = opts.command_timeout_seconds
-  if command_timeout == nil then command_timeout = 30 end
+  if command_timeout == nil then command_timeout = defaults.command_seconds end
   if not nonblank(server) or not nonblank(connection.database)
     or (user ~= nil and not nonblank(user))
     or (connection.password ~= nil and (type(connection.password) ~= 'string' or user == nil))

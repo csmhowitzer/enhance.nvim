@@ -3,6 +3,19 @@
 
 local M = {}
 
+local function run_sqlite(cmd)
+  local ok, result = pcall(function()
+    return vim.system(cmd, { text = true,
+      timeout = require('enhance.db.query_timeout').command_seconds * 1000 }):wait()
+  end)
+  if not ok then return 'Failed to start SQLite CLI', -1 end
+  local output = (result.stdout or '') .. (result.stderr or '')
+  if result.code == 124 then
+    return 'SQLite query timed out after ' .. require('enhance.db.query_timeout').command_seconds .. ' seconds', 124
+  end
+  return output, result.code or -1
+end
+
 ---SQLite supports de-batch execution (each statement run individually)
 ---@type boolean
 M.supports_debatch = true
@@ -18,8 +31,8 @@ function M.test_connection(connection)
     return false, "Database file not found: " .. db_path
   end
 
-  local output = vim.fn.system({ "sqlite3", db_path, "SELECT 1;" })
-  if vim.v.shell_error ~= 0 then
+  local output, exit_code = run_sqlite({ "sqlite3", db_path, "SELECT 1;" })
+  if exit_code ~= 0 then
     return false, "Failed to connect to SQLite database: " .. output
   end
 
@@ -111,14 +124,7 @@ function M.execute_single(connection, statement_text)
 
   local is_dml, exec_query = M.prepare_query(statement_text)
 
-  local cmd = string.format(
-    "sqlite3 %s -column -header %s",
-    vim.fn.shellescape(db_path),
-    vim.fn.shellescape(exec_query)
-  )
-
-  local output = vim.fn.system(cmd)
-  local exit_code = vim.v.shell_error
+  local output, exit_code = run_sqlite({ 'sqlite3', db_path, '-column', '-header', exec_query })
   local duration = (vim.loop.hrtime() - start_time) / 1000000 -- ms
 
   -- Split output into non-empty lines
@@ -170,4 +176,3 @@ M._has_error        = M.has_error
 M._execute_single   = M.execute_single
 
 return M
-

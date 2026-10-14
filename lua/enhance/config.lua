@@ -66,13 +66,41 @@ function M.defaults()
 end
 
 ---Validate connection configuration
+---@param name any
+---@return boolean valid
+---@return string? error
+function M.validate_storage_name(name)
+  if type(name) ~= 'string' or name == '' then return false, 'Connection name is required' end
+  if name == '.' or name == '..' or name:find('%c') or name:match('^%s') or name:match('%s$')
+    or name:find('/', 1, true) or name:find('\\', 1, true)
+    or name:find('[*?%[%]{}]') then
+    return false, 'Connection name cannot contain path separators, glob characters, control characters, or surrounding whitespace'
+  end
+  return true
+end
+
+---@param items table[]
+---@return boolean valid
+---@return string? error
+function M.validate_storage_names(items)
+  local seen = {}
+  for i, conn in ipairs(items) do
+    local valid, err = M.validate_storage_name(conn.name)
+    if not valid then return false, string.format('Connection #%d: %s', i, err) end
+    local key = conn.name:lower():gsub(' ', '_')
+    if seen[key] then return false, string.format('Connection #%d: duplicate connection name', i) end
+    seen[key] = true
+  end
+  return true
+end
+
+---Validate connection configuration
 ---@param conn ConnectionConfig Connection to validate
 ---@return boolean valid True if valid
 ---@return string? error Error message if invalid
 function M.validate_connection(conn)
-  if not conn.name or conn.name == "" then
-    return false, "Connection name is required"
-  end
+  local valid_name, name_err = M.validate_storage_name(conn.name)
+  if not valid_name then return false, name_err end
   
   if not conn.type or conn.type == "" then
     return false, "Connection type is required"
@@ -302,6 +330,8 @@ function M.load_connections(filepath)
     table.insert(connections, conn)
   end
 
+  local valid_names, names_err = M.validate_storage_names(connections)
+  if not valid_names then return {}, names_err end
   return connections, nil
 end
 
@@ -312,6 +342,8 @@ end
 function M.validate_config(config)
   -- Allow connections = {} for testing, but validate each connection
   if config.connections and type(config.connections) == "table" and #config.connections > 0 then
+    local valid_names, names_err = M.validate_storage_names(config.connections)
+    if not valid_names then return false, names_err end
     for i, conn in ipairs(config.connections) do
       local valid, err = M.validate_connection(conn)
       if not valid then

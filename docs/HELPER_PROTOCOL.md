@@ -24,13 +24,13 @@
     "trustServerCertificate": false,
     "connectTimeoutSeconds": 15
   },
-  "commandTimeoutSeconds": 30
+  "commandTimeoutSeconds": 240
 }
 ```
 
 - Required fields: protocol, query, connection, server, database. Unknown fields are rejected. Protocol must equal 1; query/server/database must not be blank.
 - Omit user/password for integrated authentication; it depends on the host's authentication prerequisites. SQL authentication uses the supplied user and optional password. A password without a user is rejected.
-- Connection timeout defaults to 15 seconds and permits 1–300. Command timeout defaults to 30 seconds and permits 1–86,400. Unlimited timeouts are not supported by this initial contract.
+- Connection timeout defaults to 15 seconds and permits 1–300. Command timeout defaults to 240 seconds and permits 1–86,400. Lua process runners allow five additional seconds beyond the connection and command deadlines (260 seconds total by default). Unlimited timeouts are not supported by this initial contract.
 - TLS encryption is mandatory. Certificate validation is on unless trustServerCertificate is explicitly true. Connection strings are constructed through SqlConnectionStringBuilder, never concatenated from values.
 
 ### MySQL and PostgreSQL Requests

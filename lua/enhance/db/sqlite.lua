@@ -118,15 +118,7 @@ M.grammar = {
 ---@return string|nil error_msg     populated on error
 ---@return number duration          milliseconds
 ---@return number row_count
-function M.execute_single(connection, statement_text)
-  local start_time = vim.loop.hrtime()
-  local db_path = vim.fn.expand(connection.path)
-
-  local is_dml, exec_query = M.prepare_query(statement_text)
-
-  local output, exit_code = run_sqlite({ 'sqlite3', db_path, '-column', '-header', exec_query })
-  local duration = (vim.loop.hrtime() - start_time) / 1000000 -- ms
-
+local function parse_execution(output, exit_code, duration, is_dml)
   -- Split output into non-empty lines
   local output_lines = {}
   for line in output:gmatch("[^\r\n]+") do
@@ -167,6 +159,43 @@ function M.execute_single(connection, statement_text)
   local parsed_result = parser.parse(output_lines, M.grammar)
 
   return parsed_result, nil, duration, row_count
+end
+
+function M.execute_single(connection, statement_text)
+  local start_time = vim.loop.hrtime()
+  local is_dml, exec_query = M.prepare_query(statement_text)
+  local output, exit_code = run_sqlite({ 'sqlite3', vim.fn.expand(connection.path), '-column', '-header', exec_query })
+  return parse_execution(output, exit_code, (vim.loop.hrtime() - start_time) / 1000000, is_dml)
+end
+
+---Run one SQLite execution group without blocking the editor.
+---@param connection table
+---@param statement_text string
+---@param callback fun(parsed: table?, err: string?, duration: number, row_count: number)
+---@return table? process Process handle for cancellation
+function M.execute_single_async(connection, statement_text, callback)
+  local start_time = vim.loop.hrtime()
+  local is_dml, exec_query = M.prepare_query(statement_text)
+  local cmd = { 'sqlite3', vim.fn.expand(connection.path), '-column', '-header', exec_query }
+  local ok, process = pcall(vim.system, cmd, {
+    text = true, timeout = require('enhance.db.query_timeout').command_seconds * 1000,
+  }, function(result)
+    vim.schedule(function()
+      local output = (result.stdout or '') .. (result.stderr or '')
+      if result.code == 124 then
+        output = 'SQLite query timed out after ' .. require('enhance.db.query_timeout').command_seconds .. ' seconds'
+      end
+      callback(parse_execution(output, result.code or -1,
+        (vim.loop.hrtime() - start_time) / 1000000, is_dml))
+    end)
+  end)
+  if not ok or not process then
+    vim.schedule(function()
+      callback(nil, 'Failed to start SQLite CLI', (vim.loop.hrtime() - start_time) / 1000000, 0)
+    end)
+    return nil
+  end
+  return process
 end
 
 -- Expose internals for testing (M._function_name pattern)

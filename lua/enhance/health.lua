@@ -84,7 +84,7 @@ function M.check()
   if check_command("sqlcmd") then
     vim.health.ok("sqlcmd found: " .. vim.fn.exepath("sqlcmd"))
   else
-    vim.health.info("sqlcmd not found - SQL Server support unavailable", {
+    vim.health.info("sqlcmd not found - SQL Server probes and explorer metadata unavailable", {
       "Install: brew install sqlcmd (macOS) or see Microsoft docs for Windows/Linux",
     })
   end
@@ -92,7 +92,7 @@ function M.check()
   if check_command("mysql") then
     vim.health.ok("mysql found: " .. vim.fn.exepath("mysql"))
   else
-    vim.health.info("mysql not found - MySQL support unavailable", {
+    vim.health.info("mysql not found - MySQL probes and explorer metadata unavailable", {
       "Install: brew install mysql-client (macOS) or apt install mysql-client (Linux)",
     })
   end
@@ -100,7 +100,7 @@ function M.check()
   if check_command("psql") then
     vim.health.ok("psql found: " .. vim.fn.exepath("psql"))
   else
-    vim.health.info("psql not found - PostgreSQL support unavailable", {
+    vim.health.info("psql not found - PostgreSQL probes and explorer metadata unavailable", {
       "Install: brew install postgresql (macOS) or apt install postgresql-client (Linux)",
     })
   end

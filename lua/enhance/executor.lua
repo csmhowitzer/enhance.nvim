@@ -98,6 +98,38 @@ function M.test_connection(connection)
   return false, "Unsupported database type: " .. connection.type
 end
 
+---Probe a connection without blocking interactive workspace navigation.
+---@param connection table
+---@param callback fun(success: boolean, error_msg: string?)
+---@return table? process
+function M.test_connection_async(connection, callback)
+  local db_type = connection.type:lower():gsub('[%s%-_]', '')
+  local adapter, cmd, label
+  if db_type == 'sqlite' then
+    local path = vim.fn.expand(connection.path)
+    if vim.fn.filereadable(path) ~= 1 then
+      vim.schedule(function() callback(false, 'Database file not found: ' .. path) end)
+      return nil
+    end
+    cmd, label = { 'sqlite3', path, 'SELECT 1;' }, 'SQLite'
+  elseif db_type == 'sqlserver' or db_type == 'mssql' then
+    adapter, label = sqlserver_adapter, 'SQL Server'
+    cmd = adapter.build_cmd(connection, { query = 'SELECT 1;', format = false, no_headers = true })
+  elseif db_type == 'mysql' or db_type == 'mariadb' then
+    adapter, label = mysql_adapter, 'MySQL'
+    cmd = adapter.build_cmd(connection, { query = 'SELECT 1;' })
+  elseif db_type == 'postgres' or db_type == 'postgresql' then
+    adapter, label = postgres_adapter, 'PostgreSQL'
+    cmd = adapter.build_cmd(connection, { query = 'SELECT 1;' })
+  else
+    vim.schedule(function() callback(false, 'Unsupported database type: ' .. connection.type) end)
+    return nil
+  end
+  return require('enhance.db.cli_credentials').system_async(cmd, connection, db_type, function(output, code)
+    if code == 0 then callback(true) else callback(false, 'Failed to connect to ' .. label .. ': ' .. output) end
+  end)
+end
+
 ---Execute a query against a database connection
 ---@param connection table Database connection
 ---@param query string SQL query to execute
@@ -194,37 +226,7 @@ end
 ---@param query_bufnr number? Optional query buffer number
 ---@param execute_single_fn function DB-specific single-statement executor
 ---  Signature: fn(connection, stmt_text) -> parsed_result, err, duration, row_count
-local function execute_debatch(connection, groups, query_bufnr, execute_single_fn)
-  local all_statement_results = {}
-  local total_duration = 0
-  local had_error = false
-
-  for _, group in ipairs(groups) do
-    local texts = {}
-    for _, stmt in ipairs(group.statements) do texts[#texts + 1] = stmt.text end
-    -- Put separators on their own lines so a trailing -- comment cannot swallow them.
-    local sql = table.concat(texts, '\n;\n')
-    local parsed_result, err, duration, row_count = execute_single_fn(connection, sql)
-    total_duration = total_duration + duration
-    if group.type == 'batch' and not err then
-      local tables = parsed_result and parsed_result.result_sets or {}
-      if #tables == 0 and parsed_result and parsed_result.headers then tables = { parsed_result } end
-      for index, result_table in ipairs(tables) do
-        local stmt = group.statements[index] or { type = 'SELECT', text = sql }
-        table.insert(all_statement_results,
-          make_statement_result(stmt, connection, index == 1 and duration or 0,
-            #result_table.rows, result_table, nil))
-      end
-    else
-      local stmt = group.statements[1]
-      local result = make_statement_result(stmt, connection, duration, row_count, parsed_result, err)
-      table.insert(all_statement_results, result)
-      if err then had_error = true end
-    end
-
-    if had_error then break end
-  end
-
+local function display_debatch(connection, query_bufnr, all_statement_results, total_duration, had_error)
   local formatter = require("enhance.formatter")
   local formatted_lines, total_table_rows, result_rows = formatter.format_multiple_statements(all_statement_results)
 
@@ -260,6 +262,65 @@ local function execute_debatch(connection, groups, query_bufnr, execute_single_f
   end
 end
 
+local function group_sql(group)
+  local texts = {}
+  for _, stmt in ipairs(group.statements) do texts[#texts + 1] = stmt.text end
+  -- Put separators on their own lines so a trailing -- comment cannot swallow them.
+  return table.concat(texts, '\n;\n')
+end
+
+local function append_group_results(results, group, connection, sql, parsed_result, err, duration, row_count)
+  if group.type == 'batch' and not err then
+    local tables = parsed_result and parsed_result.result_sets or {}
+    if #tables == 0 and parsed_result and parsed_result.headers then tables = { parsed_result } end
+    for index, result_table in ipairs(tables) do
+      local stmt = group.statements[index] or { type = 'SELECT', text = sql }
+      table.insert(results, make_statement_result(stmt, connection, index == 1 and duration or 0,
+        #result_table.rows, result_table, nil))
+    end
+  else
+    table.insert(results, make_statement_result(group.statements[1], connection, duration, row_count, parsed_result, err))
+  end
+end
+
+local function execute_debatch(connection, groups, query_bufnr, execute_single_fn)
+  local results, duration, had_error = {}, 0, false
+  for _, group in ipairs(groups) do
+    local sql = group_sql(group)
+    local parsed, err, elapsed, rows = execute_single_fn(connection, sql)
+    duration = duration + elapsed
+    append_group_results(results, group, connection, sql, parsed, err, elapsed, rows)
+    if err then had_error = true; break end
+  end
+  display_debatch(connection, query_bufnr, results, duration, had_error)
+end
+
+local function execute_debatch_async(connection, groups, query_bufnr, state, is_current, finish)
+  local results, duration = {}, 0
+  local function next_group(index)
+    local group = groups[index]
+    if not group then
+      finish()
+      display_debatch(connection, query_bufnr, results, duration, false)
+      return
+    end
+    local sql = group_sql(group)
+    state.process = sqlite_adapter.execute_single_async(connection, sql, function(parsed, err, elapsed, rows)
+      if not is_current() or (query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr)) then return end
+      state.process = nil
+      duration = duration + elapsed
+      append_group_results(results, group, connection, sql, parsed, err, elapsed, rows)
+      if err then
+        finish()
+        display_debatch(connection, query_bufnr, results, duration, true)
+      else
+        next_group(index + 1)
+      end
+    end)
+  end
+  next_group(1)
+end
+
 ---Execute SQLite statements individually (de-batched)
 ---@param connection table SQLite connection
 ---@param groups table[] Execution groups from classifier
@@ -268,11 +329,39 @@ local function execute_debatch_sqlite(connection, groups, query_bufnr)
   execute_debatch(connection, groups, query_bufnr, execute_single_sqlite_statement)
 end
 
+local sqlite_queries = {}
+local sqlite_group = vim.api.nvim_create_augroup('EnhanceSQLiteQueries', { clear = true })
+local function cancel_sqlite(key)
+  local state = sqlite_queries[key]
+  if not state then return false end
+  sqlite_queries[key] = nil
+  if state.timer and not state.timer:is_closing() then state.timer:stop(); state.timer:close() end
+  if state.process then
+    state.process:kill(9)
+  elseif state.job and state.job > 0 then
+    vim.fn.jobstop(state.job)
+  end
+  return true
+end
+vim.api.nvim_create_autocmd({ 'BufWipeout', 'VimLeavePre' }, {
+  group = sqlite_group,
+  callback = function(event)
+    for key in pairs(sqlite_queries) do
+      if event.event == 'VimLeavePre' or key == event.buf then cancel_sqlite(key) end
+    end
+  end,
+})
+
 ---Execute SQLite query using sqlite3 CLI
 ---@param connection table SQLite connection
 ---@param query string SQL query
 ---@param query_bufnr number? Optional query buffer number
 function M.execute_sqlite(connection, query, query_bufnr)
+  if query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr) then return end
+  local key = query_bufnr or 0
+  cancel_sqlite(key)
+  local state = {}
+  sqlite_queries[key] = state
   local output_lines = {}
   local start_time = vim.loop.hrtime()
   local affected_rows = nil
@@ -282,6 +371,7 @@ function M.execute_sqlite(connection, query, query_bufnr)
 
   -- Check if database exists
   if vim.fn.filereadable(db_path) ~= 1 then
+    sqlite_queries[key] = nil
     vim.notify("Database file not found: " .. db_path, vim.log.levels.ERROR)
     return
   end
@@ -299,7 +389,9 @@ function M.execute_sqlite(connection, query, query_bufnr)
   -- Route to appropriate execution path
   if classification.execution_mode == "debatch" then
     -- Use new de-batch execution
-    execute_debatch_sqlite(connection, classification.groups, query_bufnr)
+    execute_debatch_async(connection, classification.groups, query_bufnr, state, function()
+      return sqlite_queries[key] == state
+    end, function() sqlite_queries[key] = nil end)
     return
   end
 
@@ -342,6 +434,9 @@ function M.execute_sqlite(connection, query, query_bufnr)
     on_exit = function(_, exit_code)
       finished = true
       if timer and not timer:is_closing() then timer:stop(); timer:close() end
+      if sqlite_queries[key] ~= state then return end
+      sqlite_queries[key] = nil
+      if query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr) then return end
       local end_time = vim.loop.hrtime()
       local duration = (end_time - start_time) / 1000000 -- Convert to milliseconds
 
@@ -477,12 +572,19 @@ function M.execute_sqlite(connection, query, query_bufnr)
       end
     end,
   })
-  if job > 0 and not finished then
+  if job <= 0 then
+    sqlite_queries[key] = nil
+    require('enhance.results').display({ 'Query Execution Failed', 'Failed to start SQLite CLI' },
+      connection, query_bufnr, { db_type = connection.type, connection_name = connection.name, is_error = true })
+    vim.notify('Failed to start SQLite CLI', vim.log.levels.ERROR)
+  elseif not finished then
+    state.job = job
     timer = vim.defer_fn(function()
       if finished then return end
       timed_out = true
       vim.fn.jobstop(job)
     end, require('enhance.db.query_timeout').command_seconds * 1000)
+    state.timer = timer
   end
 end
 

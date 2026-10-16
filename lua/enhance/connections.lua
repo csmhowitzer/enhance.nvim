@@ -8,6 +8,12 @@ local connections = {}
 
 ---@type table?
 local current_connection = nil
+local probe_revision, probe_process = 0, nil
+
+local function cancel_probe()
+  probe_revision = probe_revision + 1
+  if probe_process then probe_process:kill(9); probe_process = nil end
+end
 
 ---Setup connections from JSON file or array (for testing)
 ---@param connections_file_or_array string|table[]|nil Path to connections JSON file or array of connections
@@ -92,6 +98,7 @@ end
 
 ---Disconnect from current connection
 function M.disconnect()
+  cancel_probe()
   if not current_connection then
     vim.notify("No active connection to disconnect", vim.log.levels.WARN)
     return
@@ -107,6 +114,37 @@ function M.disconnect()
     explorer.collapse_connection(conn_name)
     explorer.refresh()
   end
+end
+
+---Connect from the interactive connection browser without blocking the editor.
+---@param conn table
+---@param callback fun(success: boolean)?
+---@param still_open fun(): boolean? Guard for a closed connection browser
+function M.connect_async(conn, callback, still_open)
+  if not conn then
+    vim.notify('Invalid connection', vim.log.levels.ERROR)
+    if callback then callback(false) end
+    return
+  end
+  cancel_probe()
+  local revision, previous = probe_revision, current_connection
+  vim.notify('Testing connection to ' .. conn.name .. '...', vim.log.levels.INFO)
+  local finished = false
+  local process = require('enhance.executor').test_connection_async(conn, function(success, error_msg)
+    finished = true
+    if revision ~= probe_revision or current_connection ~= previous
+      or (still_open and not still_open()) then return end
+    probe_process = nil
+    if not success then
+      vim.notify('Connection failed: ' .. (error_msg or 'Unknown error'), vim.log.levels.ERROR)
+    else
+      M.set_current(conn)
+      local explorer = require('enhance.explorer')
+      if explorer.is_initialized() then explorer.refresh() end
+    end
+    if callback then callback(success) end
+  end)
+  if not finished then probe_process = process end
 end
 
 ---Connect to a database (with connection test)
@@ -175,13 +213,15 @@ function M.show_connections()
     local conn_idx = line - 3
     if conn_idx > 0 and conn_idx <= #connections then
       local conn = connections[conn_idx]
-      -- Use the new connect function (includes connection test)
-      if M.connect(conn) then
+      M.connect_async(conn, function(success)
+        if not success then return end
         -- Close the connection browser window
         if vim.api.nvim_win_is_valid(browser_win) then
           vim.api.nvim_win_close(browser_win, false)
         end
-      end
+      end, function()
+        return vim.api.nvim_win_is_valid(browser_win) and vim.api.nvim_win_get_buf(browser_win) == buf
+      end)
     end
   end, { buffer = buf })
   

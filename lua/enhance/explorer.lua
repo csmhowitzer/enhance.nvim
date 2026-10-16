@@ -26,6 +26,8 @@ local results_win = nil
 
 ---@type table? Currently active database connection
 local active_connection = nil
+local probe_revision, probe_process = 0, nil
+local script_revision, script_jobs = 0, {}
 
 ---@type boolean Whether enhance workspace has been initialized
 local workspace_initialized = false
@@ -498,11 +500,55 @@ local function has_nerd_font()
 	return false
 end
 
+local refresh_explorer
+local catalog_jobs = {}
+local catalog_listeners = {}
+local catalog_revision = 0
+
+-- Explorer rendering reads cached metadata immediately and refreshes each category
+-- when its independent CLI lookup completes. Explicit compatibility lookups stay sync.
+local function catalog_lookup(cache, key, cmd, connection, db_type, parse, async, on_complete)
+	if not async then
+		local output, code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
+		local values = code == 0 and parse(output) or {}
+		cache[key] = values
+		return values
+	end
+	if cache[key] then return cache[key] end
+	if on_complete then
+		catalog_listeners[key] = catalog_listeners[key] or {}
+		table.insert(catalog_listeners[key], on_complete)
+	end
+	if catalog_jobs[key] then return {} end
+	local revision = catalog_revision
+	local ok, process = pcall(vim.system, cmd, {
+		env = require('enhance.db.cli_credentials').env(connection, db_type),
+		text = true, timeout = 30000,
+	}, function(result)
+		vim.schedule(function()
+			if revision ~= catalog_revision then return end
+			catalog_jobs[key] = nil
+			cache[key] = result.code == 0 and parse(result.stdout or '') or {}
+			if M.is_open() then refresh_explorer() end
+			for _, listener in ipairs(catalog_listeners[key] or {}) do listener() end
+			catalog_listeners[key] = nil
+		end)
+	end)
+	if not ok or not process then
+		cache[key] = {}
+		catalog_listeners[key] = nil
+		vim.notify('Failed to start database catalog CLI', vim.log.levels.WARN)
+	else
+		catalog_jobs[key] = process
+	end
+	return {}
+end
+
 ---Fetch table names from database
 ---@param connection table Database connection
 ---@param force_refresh boolean? Force refresh (skip cache)
 ---@return string[] tables List of table names
-local function fetch_tables(connection, force_refresh)
+local function fetch_tables(connection, force_refresh, async, on_complete)
 	local cache_key = "tables:" .. connection.name
 
 	-- Return cached if available (unless force_refresh is true)
@@ -516,19 +562,18 @@ local function fetch_tables(connection, force_refresh)
 	if db_type == "sqlite" then
 		-- SQLite: Query sqlite_master
 		local db_path = vim.fn.expand(connection.path)
-		local output = vim.fn.system({
+		local cmd = {
 			"sqlite3",
 			db_path,
 			"SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;",
-		})
-
-		if vim.v.shell_error == 0 then
+		}
+		return catalog_lookup(table_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
-				if line ~= "" then
-					table.insert(tables, line)
-				end
+				if line ~= "" then table.insert(items, line) end
 			end
-		end
+			return items
+		end, async, on_complete)
 	elseif db_type == "sqlserver" or db_type == "mssql" then
 		-- SQL Server: Query INFORMATION_SCHEMA
 		local cmd = {
@@ -560,45 +605,45 @@ local function fetch_tables(connection, force_refresh)
 			"SELECT QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME;"
 		)
 
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
+		return catalog_lookup(table_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
-					table.insert(tables, trimmed)
+					table.insert(items, trimmed)
 				end
 			end
-		end
+			return items
+		end, async, on_complete)
 	elseif db_type == "mysql" or db_type == "mariadb" then
 		-- MySQL: SHOW TABLES
 		local cmd = require('enhance.db.mysql').build_cmd(connection,
 			{ query = "SHOW TABLES;", flags = { "-N", "-s" } })
 
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
+		return catalog_lookup(table_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				if line ~= "" then
-					table.insert(tables, require('enhance.db.object_identity').label(nil, line, db_type))
+					table.insert(items, require('enhance.db.object_identity').label(nil, line, db_type))
 				end
 			end
-		end
+			return items
+		end, async, on_complete)
 	elseif db_type == "postgres" or db_type == "postgresql" then
 		-- PostgreSQL: Query pg_tables
 		local cmd = require('enhance.db.postgres').build_cmd(connection,
 			{ query = [[SELECT '"' || replace(schemaname, '"', '""') || '"."' || replace(tablename, '"', '""') || '"' FROM pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema') AND schemaname NOT LIKE 'pg_toast%' ORDER BY schemaname, tablename;]],
 				flags = { "-t", "-A" } })
 
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
+		return catalog_lookup(table_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				if line ~= "" then
-					table.insert(tables, line)
+					table.insert(items, line)
 				end
 			end
-		end
+			return items
+		end, async, on_complete)
 	end
 
 	-- Cache the result
@@ -619,7 +664,7 @@ end
 ---@param connection table Database connection
 ---@param force_refresh boolean? Force cache refresh
 ---@return string[] views List of view names
-local function fetch_views(connection, force_refresh)
+local function fetch_views(connection, force_refresh, async, on_complete)
 	local cache_key = "views:" .. connection.name
 	if not force_refresh and object_cache[cache_key] then
 		return object_cache[cache_key]
@@ -647,15 +692,16 @@ local function fetch_views(connection, force_refresh)
 		end
 		table.insert(cmd, "-Q")
 		table.insert(cmd, "SELECT QUOTENAME(TABLE_SCHEMA) + '.' + QUOTENAME(TABLE_NAME) FROM INFORMATION_SCHEMA.VIEWS ORDER BY TABLE_SCHEMA, TABLE_NAME;")
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-		if exit_code == 0 then
+		return catalog_lookup(object_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
-					table.insert(views, trimmed)
+					table.insert(items, trimmed)
 				end
 			end
-		end
+			return items
+		end, async, on_complete)
 	end
 
 	object_cache[cache_key] = views
@@ -666,7 +712,7 @@ end
 ---@param connection table Database connection
 ---@param force_refresh boolean? Force cache refresh
 ---@return string[] procs List of procedure names
-local function fetch_procedures(connection, force_refresh)
+local function fetch_procedures(connection, force_refresh, async)
 	local cache_key = "procedures:" .. connection.name
 	if not force_refresh and object_cache[cache_key] then
 		return object_cache[cache_key]
@@ -697,15 +743,16 @@ local function fetch_procedures(connection, force_refresh)
 			cmd,
 			"SELECT QUOTENAME(ROUTINE_SCHEMA) + '.' + QUOTENAME(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;"
 		)
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-		if exit_code == 0 then
+		return catalog_lookup(object_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
-					table.insert(procs, trimmed)
+					table.insert(items, trimmed)
 				end
 			end
-		end
+			return items
+		end, async)
 	end
 
 	object_cache[cache_key] = procs
@@ -716,7 +763,7 @@ end
 ---@param connection table Database connection
 ---@param force_refresh boolean? Force cache refresh
 ---@return string[] funcs List of function names
-local function fetch_functions(connection, force_refresh)
+local function fetch_functions(connection, force_refresh, async)
 	local cache_key = "functions:" .. connection.name
 	if not force_refresh and object_cache[cache_key] then
 		return object_cache[cache_key]
@@ -747,15 +794,16 @@ local function fetch_functions(connection, force_refresh)
 			cmd,
 			"SELECT QUOTENAME(ROUTINE_SCHEMA) + '.' + QUOTENAME(ROUTINE_NAME) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'FUNCTION' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME;"
 		)
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-		if exit_code == 0 then
+		return catalog_lookup(object_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
-					table.insert(funcs, trimmed)
+					table.insert(items, trimmed)
 				end
 			end
-		end
+			return items
+		end, async)
 	end
 
 	object_cache[cache_key] = funcs
@@ -766,7 +814,7 @@ end
 ---@param connection table Database connection
 ---@param force_refresh boolean? Force cache refresh
 ---@return string[] temp_tables List of global temp table names
-local function fetch_temp_tables(connection, force_refresh)
+local function fetch_temp_tables(connection, force_refresh, async)
 	local cache_key = "temp_tables:" .. connection.name
 	if not force_refresh and object_cache[cache_key] then
 		return object_cache[cache_key]
@@ -794,15 +842,16 @@ local function fetch_temp_tables(connection, force_refresh)
 		end
 		table.insert(cmd, "-Q")
 		table.insert(cmd, "SELECT name FROM tempdb.sys.tables WHERE name LIKE '##%' ORDER BY name;")
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-		if exit_code == 0 then
+		return catalog_lookup(object_cache, cache_key, cmd, connection, db_type, function(output)
+			local items = {}
 			for line in output:gmatch("[^\r\n]+") do
 				local trimmed = line:match("^%s*(.-)%s*$")
 				if trimmed ~= "" and not trimmed:match("^%(") then
-					table.insert(temp_tables, trimmed)
+					table.insert(items, trimmed)
 				end
 			end
-		end
+			return items
+		end, async)
 	end
 
 	object_cache[cache_key] = temp_tables
@@ -988,7 +1037,7 @@ local function build_explorer_content()
 			local tables_expanded = expanded[tables_key]
 			local tables_arrow = get_arrow_icon(tables_expanded)
 			local tables_icon = get_node_icon("tables")
-			local tables = fetch_tables(conn)
+			local tables = fetch_tables(conn, nil, true)
 			local tables_count = #tables
 			table.insert(lines, string.format("    %s %s  Tables (%d)", tables_arrow, tables_icon, tables_count))
 
@@ -1030,7 +1079,7 @@ local function build_explorer_content()
 
 				-- Global Temp Tables subfolder (SQL Server only, nested inside Tables)
 				if caps.global_temp_tables then
-					local temp_tables_list = fetch_temp_tables(conn)
+					local temp_tables_list = fetch_temp_tables(conn, nil, true)
 					local temp_key = conn_key .. ":temp_tables"
 					local temp_expanded = expanded[temp_key]
 					local temp_arrow = get_arrow_icon(temp_expanded)
@@ -1062,7 +1111,7 @@ local function build_explorer_content()
 
 			-- Views section (all databases with view support)
 			if caps.views then
-				local views_list = fetch_views(conn)
+				local views_list = fetch_views(conn, nil, true)
 				local views_key = conn_key .. ":views"
 				local views_expanded = expanded[views_key]
 				local views_arrow = get_arrow_icon(views_expanded)
@@ -1090,7 +1139,7 @@ local function build_explorer_content()
 
 			-- Stored Procedures section
 			if caps.procedures then
-				local procs_list = fetch_procedures(conn)
+				local procs_list = fetch_procedures(conn, nil, true)
 				local procs_key = conn_key .. ":procedures"
 				local procs_expanded = expanded[procs_key]
 				local procs_arrow = get_arrow_icon(procs_expanded)
@@ -1121,7 +1170,7 @@ local function build_explorer_content()
 
 			-- Functions section
 			if caps.functions then
-				local funcs_list = fetch_functions(conn)
+				local funcs_list = fetch_functions(conn, nil, true)
 				local funcs_key = conn_key .. ":functions"
 				local funcs_expanded = expanded[funcs_key]
 				local funcs_arrow = get_arrow_icon(funcs_expanded)
@@ -1487,7 +1536,7 @@ local function apply_status_highlights()
 end
 
 ---Refresh explorer buffer content
-local function refresh_explorer()
+refresh_explorer = function()
 	if not explorer_buf or not vim.api.nvim_buf_is_valid(explorer_buf) then
 		return
 	end
@@ -2760,27 +2809,25 @@ end
 ---Execute a query and return raw output (for script generation)
 ---@param connection table Database connection
 ---@param query string SQL query
----@return string? output Raw query output or nil
-local function execute_query_for_script(connection, query)
+---@param callback fun(output: string?)? Use nonblocking CLI for menu actions
+---@return string|table? Raw output in synchronous mode, or process handle in async mode
+local function execute_query_for_script(connection, query, callback)
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
 	-- Remove SQL comments (-- style) to avoid issues with command-line parsing
 	local clean_query = query:gsub("%-%-[^\n]*\n", "\n")
 	clean_query = vim.trim(clean_query)
 
+	local cmd
 	if db_type == "sqlite" then
 		local db_path = vim.fn.expand(connection.path)
-		local output = vim.fn.system({
+		cmd = {
 			"sqlite3",
 			db_path,
 			clean_query,
-		})
-
-		if vim.v.shell_error == 0 and output and #output > 0 then
-			return output
-		end
+		}
 	elseif db_type == "sqlserver" or db_type == "mssql" then
-		local cmd = {
+		cmd = {
 			"sqlcmd",
 			"-S",
 			connection.server or connection.host,
@@ -2808,32 +2855,25 @@ local function execute_query_for_script(connection, query)
 		table.insert(cmd, "-h")
 		table.insert(cmd, "-1")
 
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
-			return output
-		end
 	elseif db_type == "mysql" or db_type == "mariadb" then
-		local cmd = require('enhance.db.mysql').build_cmd(connection,
+		cmd = require('enhance.db.mysql').build_cmd(connection,
 			{ query = query, flags = { "-N", "-B" } })
-
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
-			return output
-		end
 	elseif db_type == "postgres" or db_type == "postgresql" then
-		local cmd = require('enhance.db.postgres').build_cmd(connection,
+		cmd = require('enhance.db.postgres').build_cmd(connection,
 			{ query = query, flags = { "-t", "-A" } })
-
-		local output, exit_code = require('enhance.db.cli_credentials').system(cmd, connection, db_type)
-
-		if exit_code == 0 then
-			return output
-		end
 	end
-
-	return nil
+	if not cmd then
+		if callback then vim.schedule(function() callback(nil) end) end
+		return nil
+	end
+	local cli = require('enhance.db.cli_credentials')
+	if callback then
+		return cli.system_async(cmd, connection, db_type, function(output, code)
+			callback(code == 0 and output ~= '' and output or nil)
+		end)
+	end
+	local output, code = cli.system(cmd, connection, db_type)
+	return code == 0 and output ~= '' and output or nil
 end
 
 ---Fetch object definition from sys.sql_modules and build a ready-to-run ALTER or CREATE script
@@ -2841,12 +2881,15 @@ end
 ---@param connection table Database connection
 ---@param object_name string Schema-qualified view/proc/function name
 ---@param query_type string "view_alter"|"view_create"|"proc_alter"|"func_alter"
----@return string script Ready-to-edit SQL script
-local function fetch_definition_script(connection, object_name, query_type)
+---@param callback fun(script: string?)? Asynchronous menu callback
+---@return string|table? Script or process handle
+local function fetch_definition_script(connection, object_name, query_type, callback)
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
 	if db_type ~= "sqlserver" and db_type ~= "mssql" then
-		return string.format("-- fetch_definition_script: not supported for %s", db_type)
+		local script = string.format("-- fetch_definition_script: not supported for %s", db_type)
+		if callback then callback(script); return end
+		return script
 	end
 
 	local identity = require('enhance.db.object_identity')
@@ -2856,33 +2899,37 @@ local function fetch_definition_script(connection, object_name, query_type)
 		identity.literal(qualified, db_type)
 	)
 
-	local raw = execute_query_for_script(connection, query)
-	if not raw then
-		return string.format("-- Failed to fetch definition for %s", qualified)
+	local function format_definition(raw)
+		if not raw then
+			return string.format("-- Failed to fetch definition for %s", qualified)
+		end
+
+		-- Strip sqlcmd noise: "(N rows affected)" lines and surrounding blank lines.
+		local definition = raw:gsub("%(%d+ rows? affected%)\r?\n?", "")
+		definition = vim.trim(definition)
+		if definition == "" then
+			return string.format("-- No definition found for %s", qualified)
+		end
+
+		-- For ALTER queries, replace the leading CREATE keyword.
+		if query_type == "view_alter" then
+			definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+VIEW%s", "ALTER VIEW ", 1)
+			definition = definition:gsub("^%s*CREATE%s+VIEW%s", "ALTER VIEW ", 1)
+		elseif query_type == "proc_alter" then
+			definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
+			definition = definition:gsub("^%s*CREATE%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
+		elseif query_type == "func_alter" then
+			definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+FUNCTION%s", "ALTER FUNCTION ", 1)
+			definition = definition:gsub("^%s*CREATE%s+FUNCTION%s", "ALTER FUNCTION ", 1)
+		end
+		-- For view_create, return definition as-is (it's already the CREATE script).
+
+		return definition
 	end
-
-	-- Strip sqlcmd noise: "(N rows affected)" lines and surrounding blank lines
-	local definition = raw:gsub("%(%d+ rows? affected%)\r?\n?", "")
-	definition = vim.trim(definition)
-
-	if definition == "" then
-		return string.format("-- No definition found for %s", qualified)
+	if callback then
+		return execute_query_for_script(connection, query, function(raw) callback(format_definition(raw)) end)
 	end
-
-	-- For ALTER queries, replace the leading CREATE keyword
-	if query_type == "view_alter" then
-		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+VIEW%s", "ALTER VIEW ", 1)
-		definition = definition:gsub("^%s*CREATE%s+VIEW%s", "ALTER VIEW ", 1)
-	elseif query_type == "proc_alter" then
-		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
-		definition = definition:gsub("^%s*CREATE%s+PROCEDURE%s", "ALTER PROCEDURE ", 1)
-	elseif query_type == "func_alter" then
-		definition = definition:gsub("^%s*CREATE%s+OR%s+ALTER%s+FUNCTION%s", "ALTER FUNCTION ", 1)
-		definition = definition:gsub("^%s*CREATE%s+FUNCTION%s", "ALTER FUNCTION ", 1)
-	end
-	-- For view_create, return definition as-is (it's already the CREATE script)
-
-	return definition
+	return format_definition(execute_query_for_script(connection, query))
 end
 
 ---Parse script from query output
@@ -2918,30 +2965,37 @@ end
 ---@param connection table Database connection
 ---@param table_name string Table name
 ---@param script_type string Script type (table_create, table_update, table_drop, table_delete_records)
----@return string? script Generated script or nil
-local function generate_table_script(connection, table_name, script_type)
+---@param callback fun(script: string?)? Asynchronous menu callback
+---@return string|table? Script or process handle
+local function generate_table_script(connection, table_name, script_type, callback)
 	-- For DROP and DELETE, we can generate directly without executing a query
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
 
 	if script_type == "table_drop" or script_type == "table_delete_records" then
-		return string.format("-- %s for %s\n%s", script_type, table_name,
+		local script = string.format("-- %s for %s\n%s", script_type, table_name,
 			generate_metadata_query(connection, table_name, script_type))
+		if callback then callback(script); return end
+		return script
 	elseif script_type == "table_create" or script_type == "table_update" then
 		-- For CREATE and UPDATE, we need to execute a metadata query and extract the result
 		local query = generate_metadata_query(connection, table_name, script_type)
 		if not query then
+			if callback then callback(nil) end
 			return nil
 		end
 
 		-- Execute the query and get raw output
-		local output = execute_query_for_script(connection, query)
-		if not output then
-			return string.format("-- Failed to generate %s script for %s", script_type, table_name)
+		local function format_script(output)
+			if not output then
+				return string.format("-- Failed to generate %s script for %s", script_type, table_name)
+			end
+			local script = parse_script_from_output(output, db_type, script_type)
+			return script or string.format("-- Failed to parse %s script for %s", script_type, table_name)
 		end
-
-		-- Parse the output to extract the actual script
-		local script = parse_script_from_output(output, db_type, script_type)
-		return script or string.format("-- Failed to parse %s script for %s", script_type, table_name)
+		if callback then
+			return execute_query_for_script(connection, query, function(output) callback(format_script(output)) end)
+		end
+		return format_script(execute_query_for_script(connection, query))
 	end
 
 	return nil
@@ -2981,6 +3035,32 @@ local function create_script_buffer(connection, script, context)
 	refresh_explorer()
 
 	-- NO auto-execution - user must manually run with <F5>
+end
+
+---Start a metadata-dependent menu action without blocking the explorer.
+---@param connection table
+---@param context string
+---@param start fun(callback: fun(script: string?)): table? CLI process handle
+local function open_metadata_script(connection, context, start)
+	local revision = script_revision
+	local selected_connection = require('enhance.connections').get_current()
+	local token, finished = {}, false
+	vim.notify('Loading ' .. context .. ' script...', vim.log.levels.INFO)
+	local process = start(function(script)
+		finished = true
+		script_jobs[token] = nil
+		if revision ~= script_revision or not workspace_initialized
+			or require('enhance.connections').get_current() ~= selected_connection then return end
+		if script then
+			if script:match('^%-%- Failed ') then
+				vim.notify('Failed to generate ' .. context .. ' script', vim.log.levels.ERROR)
+			end
+			create_script_buffer(connection, script, context)
+		else
+			vim.notify('Failed to generate ' .. context .. ' script', vim.log.levels.ERROR)
+		end
+	end)
+	if process and not finished then script_jobs[token] = process end
 end
 
 ---Create new buffer with query and auto-execute (switches query editor buffer)
@@ -3175,10 +3255,14 @@ local function handle_open(line_num)
 		-- Generate script (no auto-execution)
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
-			local script = generate_table_script(conn, info.table_name, info.type)
-			if script then
-				local context = string.format("%s-%s", info.table_name, info.type:lower())
-				create_script_buffer(conn, script, context)
+			local context = string.format("%s-%s", info.table_name, info.type:lower())
+			if info.type == 'table_create' or info.type == 'table_update' then
+				open_metadata_script(conn, context, function(done)
+					return generate_table_script(conn, info.table_name, info.type, done)
+				end)
+			else
+				local script = generate_table_script(conn, info.table_name, info.type)
+				if script then create_script_buffer(conn, script, context) end
 			end
 		end
 	elseif
@@ -3189,16 +3273,18 @@ local function handle_open(line_num)
 	then
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
-			local script
 			-- Pre-fetch definition for ALTER and CREATE (opens ready-to-run script)
 			if info.type == "view_alter" or info.type == "view_create" then
-				script = fetch_definition_script(conn, info.view_name, info.type)
-			else
-				script = generate_object_script(conn, info.view_name, info.type)
-			end
-			if script then
 				local context = string.format("%s-%s", info.view_name, info.type:lower())
-				create_script_buffer(conn, script, context)
+				open_metadata_script(conn, context, function(done)
+					return fetch_definition_script(conn, info.view_name, info.type, done)
+				end)
+			else
+				local script = generate_object_script(conn, info.view_name, info.type)
+				if script then
+					local context = string.format("%s-%s", info.view_name, info.type:lower())
+					create_script_buffer(conn, script, context)
+				end
 			end
 		end
 	elseif
@@ -3209,16 +3295,18 @@ local function handle_open(line_num)
 	then
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
-			local script
 			-- Pre-fetch definition for ALTER (opens ready-to-run script)
 			if info.type == "proc_alter" then
-				script = fetch_definition_script(conn, info.proc_name, info.type)
-			else
-				script = generate_object_script(conn, info.proc_name, info.type)
-			end
-			if script then
 				local context = string.format("%s-%s", info.proc_name, info.type:lower())
-				create_script_buffer(conn, script, context)
+				open_metadata_script(conn, context, function(done)
+					return fetch_definition_script(conn, info.proc_name, info.type, done)
+				end)
+			else
+				local script = generate_object_script(conn, info.proc_name, info.type)
+				if script then
+					local context = string.format("%s-%s", info.proc_name, info.type:lower())
+					create_script_buffer(conn, script, context)
+				end
 			end
 		end
 	elseif
@@ -3229,16 +3317,18 @@ local function handle_open(line_num)
 	then
 		local conn = connections.get_connection(info.conn_name)
 		if conn then
-			local script
 			-- Pre-fetch definition for ALTER (opens ready-to-run script)
 			if info.type == "func_alter" then
-				script = fetch_definition_script(conn, info.func_name, info.type)
-			else
-				script = generate_object_script(conn, info.func_name, info.type)
-			end
-			if script then
 				local context = string.format("%s-%s", info.func_name, info.type:lower())
-				create_script_buffer(conn, script, context)
+				open_metadata_script(conn, context, function(done)
+					return fetch_definition_script(conn, info.func_name, info.type, done)
+				end)
+			else
+				local script = generate_object_script(conn, info.func_name, info.type)
+				if script then
+					local context = string.format("%s-%s", info.func_name, info.type:lower())
+					create_script_buffer(conn, script, context)
+				end
 			end
 		end
 	elseif
@@ -3286,6 +3376,8 @@ local function handle_enter(line_num)
 		local is_already_connected = current_conn and current_conn.name == conn.name
 
 		if is_already_connected then
+			probe_revision = probe_revision + 1
+			if probe_process then probe_process:kill(9); probe_process = nil end
 			-- Pressing <CR> on already-connected database → DISCONNECT and collapse
 			connections.disconnect()
 			local conn_key = "conn:" .. conn.name
@@ -3295,23 +3387,25 @@ local function handle_enter(line_num)
 			return
 		end
 
-		-- Different database or no connection
-		-- If there's a current connection, collapse its tree (disconnect happens via set_current)
-		if current_conn then
-			local old_conn_key = "conn:" .. current_conn.name
-			expanded[old_conn_key] = false  -- Collapse old tree
-		end
-
 		-- Test the new connection
 		vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
 		local executor = require("enhance.executor")
-		local success, error_msg = executor.test_connection(conn)
+		probe_revision = probe_revision + 1
+		if probe_process then probe_process:kill(9); probe_process = nil end
+		local revision = probe_revision
+		local finished = false
+		local process = executor.test_connection_async(conn, function(success, error_msg)
+			finished = true
+			if revision ~= probe_revision or not workspace_initialized
+				or connections.get_current() ~= current_conn then return end
+			probe_process = nil
 
-		if not success then
+			if not success then
 			-- Connection failed - show error, keep X, don't expand
-			vim.notify("Connection failed: " .. (error_msg or "Unknown error"), vim.log.levels.ERROR)
-			return
-		end
+				vim.notify("Connection failed: " .. (error_msg or "Unknown error"), vim.log.levels.ERROR)
+				return
+			end
+			if current_conn then expanded['conn:' .. current_conn.name] = false end
 
 		-- Connection succeeded - set as current, expand tree, show checkmark
 		connections.set_current(conn)
@@ -3354,6 +3448,8 @@ local function handle_enter(line_num)
 
 		-- Refresh to show checkmark and expanded tree
 		refresh_explorer()
+		end)
+		if not finished then probe_process = process end
 	elseif info.type == "dashboard" then
 		local conn = connections.get_connection(info.conn_name)
 		if conn then M.open_dashboard(conn) end
@@ -3747,9 +3843,14 @@ function M.show_dashboard(connection, force, row_counts, skip_fetch)
 		return
 	end
 	local db_type = connection.type:lower():gsub("[%s%-_]", "")
-	local view_count = (db_type == "sqlserver" or db_type == "mssql") and #fetch_views(connection) or nil
+	local update_dashboard
+	local function catalog_ready()
+		if update_dashboard then update_dashboard() end
+	end
+	local view_count = (db_type == "sqlserver" or db_type == "mssql")
+		and #fetch_views(connection, nil, true, catalog_ready) or nil
 	local landing = require("enhance.landing")
-	local tables = fetch_tables(connection)
+	local tables = fetch_tables(connection, nil, true, catalog_ready)
 	local temp_buffers = 0
 	for _, buffer in ipairs(get_buffers_for_connection(connection.name)) do
 		if vim.fn.filereadable(buffer.filepath) == 1 then
@@ -3773,8 +3874,12 @@ function M.show_dashboard(connection, force, row_counts, skip_fetch)
 	if previous_dashboard and previous_dashboard ~= shown_buf and vim.api.nvim_buf_is_valid(previous_dashboard) then
 		vim.api.nvim_buf_delete(previous_dashboard, { force = true })
 	end
-	local function update_dashboard()
+	update_dashboard = function()
 		if dashboard_revision[connection.name] ~= revision then return end
+		tables = fetch_tables(connection, nil, true)
+		if db_type == 'sqlserver' or db_type == 'mssql' then
+			view_count = #fetch_views(connection, nil, true)
+		end
 		local current_buf = dashboard_buffers[connection.name]
 		if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == current_buf then
 			dashboard_buffers[connection.name] = landing.show_dashboard(win, connection, tables, view_count,
@@ -4025,6 +4130,11 @@ function M.stop()
 		vim.notify("Enhance workspace not started", vim.log.levels.WARN)
 		return
 	end
+	script_revision = script_revision + 1
+	for _, process in pairs(script_jobs) do process:kill(9) end
+	script_jobs = {}
+	probe_revision = probe_revision + 1
+	if probe_process then probe_process:kill(9); probe_process = nil end
 
 	-- These splits were created by Enhance; the editor window and tab existed beforehand.
 	-- Do not switch tabs or discard a modified query just to stop the workspace.
@@ -4068,6 +4178,11 @@ function M.stop()
 	active_connection = nil
 	expanded = {}
 	table_cache = {}
+	object_cache = {}
+	catalog_revision = catalog_revision + 1
+	for _, process in pairs(catalog_jobs) do process:kill(9) end
+	catalog_jobs = {}
+	catalog_listeners = {}
 	connection_buffers = {}
 	dashboard_buffers = {}
 	table_dashboard_buffers = {}
@@ -4102,8 +4217,13 @@ function M.refresh()
 		return
 	end
 
-	-- Clear table cache to force refresh
+	-- Invalidate pending lookups so their late results cannot repaint a new tree.
+	catalog_revision = catalog_revision + 1
+	for _, process in pairs(catalog_jobs) do process:kill(9) end
+	catalog_jobs = {}
+	catalog_listeners = {}
 	table_cache = {}
+	object_cache = {}
 
 	-- Redraw the explorer
 	refresh_explorer()

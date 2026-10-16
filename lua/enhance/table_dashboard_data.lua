@@ -19,6 +19,13 @@ local function run(connection, query, callback, definition)
   table.insert(cmd, #cmd - 1, '-w')
   table.insert(cmd, #cmd - 1, definition and '65535' or '4096')
   local output, errors = {}, {}
+  local finished, timer = false, nil
+  local function finish(value)
+    if finished then return end
+    finished = true
+    if timer and not timer:is_closing() then timer:stop(); timer:close() end
+    vim.schedule(function() callback(value) end)
+  end
   local job = vim.fn.jobstart(cmd, {
     env = require('enhance.db.cli_credentials').env(connection, 'sqlserver'),
     stdout_buffered = true,
@@ -31,12 +38,18 @@ local function run(connection, query, callback, definition)
       end
     end,
     on_exit = function(_, code)
-      vim.schedule(function()
-        callback(code == 0 and #errors == 0 and not adapter.has_error(output) and output or nil)
-      end)
+      finish(code == 0 and #errors == 0 and not adapter.has_error(output) and output or nil)
     end,
   })
-  if job <= 0 then vim.schedule(function() callback(nil) end) end
+  if job <= 0 then
+    finish(nil)
+  elseif not finished then
+    timer = vim.defer_fn(function()
+      if finished then return end
+      finish(nil)
+      vim.fn.jobstop(job)
+    end, 30000)
+  end
 end
 
 ---@param connection table

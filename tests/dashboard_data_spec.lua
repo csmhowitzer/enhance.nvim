@@ -66,6 +66,30 @@ describe('enhance dashboard SQL Server estimates', function()
     assert.is_true(vim.wait(200, function() return called end, 10))
   end)
 
+  it('stops hung metadata jobs and returns unavailable once', function()
+    local old_defer, old_stop = vim.defer_fn, vim.fn.jobstop
+    local fire, opts, stopped, calls = nil, nil, nil, 0
+    vim.defer_fn = function(fn, ms)
+      assert.equals(30000, ms)
+      fire = fn
+      return { is_closing = function() return false end, stop = function() end, close = function() end }
+    end
+    vim.fn.jobstart = function(_, options) opts = options; return 56 end
+    vim.fn.jobstop = function(job) stopped = job; return 1 end
+    local ok, err = pcall(function()
+      data.fetch_sqlserver_rows({ type = 'sqlserver', server = 'local', database = 'demo' }, function(rows)
+        assert.is_nil(rows)
+        calls = calls + 1
+      end)
+      fire()
+      opts.on_exit(nil, 0)
+      assert.equals(56, stopped)
+      assert.is_true(vim.wait(200, function() return calls == 1 end, 10))
+    end)
+    vim.defer_fn, vim.fn.jobstop = old_defer, old_stop
+    if not ok then error(err) end
+  end)
+
   it('fetches used space from all database data files without counting log files', function()
     assert.equals(1536, data.parse_database_size({ '1536', '(1 row affected)' }))
     assert.is_nil(data.parse_database_size({ 'NULL', '(1 row affected)' }))

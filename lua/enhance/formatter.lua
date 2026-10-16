@@ -25,7 +25,7 @@ local default_config = {
 ---Keep physical result rows on one screen line; retain raw values in row_map.
 local function display_value(value)
   return tostring(value):gsub("\r\n", "\\n"):gsub("\n", "\\n")
-    :gsub("\r", "\\r"):gsub("\t", "\\t")
+    :gsub("\r", "\\r"):gsub("\t", "\\t"):gsub('%z', '\\0')
 end
 
 ---Calculate optimal column widths based on data
@@ -39,14 +39,15 @@ local function calculate_column_widths(headers, rows, config, column_types)
   
   -- Initialize with header widths
   for i, header in ipairs(headers) do
-    widths[i] = #header
+    widths[i] = vim.fn.strdisplaywidth(header)
   end
   
   -- Check data rows for wider values
   for _, row in ipairs(rows) do
     for i, cell in ipairs(row) do
       if widths[i] then
-        local cell_width = #display_value((cell == nil or cell == vim.NIL) and config.null_display or cell)
+        local displayed = display_value((cell == nil or cell == vim.NIL) and config.null_display or cell)
+        local cell_width = vim.fn.strdisplaywidth(displayed)
         if cell_width > widths[i] then
           widths[i] = cell_width
         end
@@ -56,12 +57,15 @@ local function calculate_column_widths(headers, rows, config, column_types)
 
   -- A toggleable type row must fit without shifting any result columns.
   for i, type_name in ipairs(column_types or {}) do
-    if widths[i] then widths[i] = math.max(widths[i], #type_name) end
+    if widths[i] then widths[i] = math.max(widths[i], vim.fn.strdisplaywidth(type_name)) end
   end
   
   -- Apply min/max constraints
   for i = 1, #widths do
-    widths[i] = math.max(config.min_column_width, math.min(config.max_column_width, widths[i]))
+    -- The data cap must not hide a complete column name or a visible type label.
+    widths[i] = math.max(config.min_column_width, vim.fn.strdisplaywidth(headers[i]),
+      column_types and column_types[i] and vim.fn.strdisplaywidth(column_types[i]) or 0,
+      math.min(config.max_column_width, widths[i]))
   end
   
   return widths
@@ -73,16 +77,23 @@ end
 ---@param indicator string Truncation indicator
 ---@return string Truncated value
 local function truncate_value(value, width, indicator)
-  if #value <= width then
+  if vim.fn.strdisplaywidth(value) <= width then
     return value
   end
-  
-  local indicator_len = #indicator
-  if width <= indicator_len then
-    return indicator:sub(1, width)
+
+  local indicator_width = vim.fn.strdisplaywidth(indicator)
+  local limit = width - indicator_width
+  if limit < 0 then
+    value, limit, indicator = indicator, width, ''
   end
-  
-  return value:sub(1, width - indicator_len) .. indicator
+
+  local prefix = ''
+  for i = 1, vim.fn.strchars(value) do
+    local candidate = vim.fn.strcharpart(value, 0, i)
+    if vim.fn.strdisplaywidth(candidate) > limit then break end
+    prefix = candidate
+  end
+  return prefix .. indicator
 end
 
 ---Pad a value to fit within width
@@ -90,7 +101,7 @@ end
 ---@param width number Target width
 ---@return string Padded value
 local function pad_value(value, width)
-  local padding = width - #value
+  local padding = width - vim.fn.strdisplaywidth(value)
   if padding <= 0 then
     return value
   end
@@ -104,6 +115,7 @@ end
 ---@return string Formatted row
 local function format_row(row, widths, config)
   local cells = {}
+  local byte_widths = {}
 
   -- Iterate over all columns (based on widths, not row length)
   for i = 1, #widths do
@@ -119,17 +131,18 @@ local function format_row(row, widths, config)
     end
 
     -- Truncate if needed
-  local truncated = truncate_value(display_value(value), width, config.truncate_indicator)
+    local truncated = truncate_value(display_value(value), width, config.truncate_indicator)
 
     -- Pad to width
     local padded = pad_value(truncated, width)
 
     table.insert(cells, padded)
+    byte_widths[i] = #padded
   end
 
   -- Build row with separators, trim trailing space
   local row = config.separator .. table.concat(cells, config.separator) .. config.separator
-  return vim.trim(row)
+  return vim.trim(row), byte_widths
 end
 
 ---Generate header separator line
@@ -179,16 +192,18 @@ function M.format(parsed_result, user_config)
   local row_map = {}
 
   -- Format header
-  table.insert(lines, format_row(headers, widths, config))
+  local header_line = format_row(headers, widths, config)
+  table.insert(lines, header_line)
 
   -- Add separator
   table.insert(lines, generate_separator(widths, config))
 
   -- Format data rows
   for row_idx, row in ipairs(rows) do
-    table.insert(lines, format_row(row, widths, config))
+    local line, byte_widths = format_row(row, widths, config)
+    table.insert(lines, line)
     row_map[#lines] = {
-      values = row, widths = widths, json_columns = json_columns,
+      values = row, widths = widths, byte_widths = byte_widths, json_columns = json_columns,
       explicit_nulls = explicit_nulls,
       column_types = parsed_result.column_types,
       rows = rows, headers = headers, row_idx = row_idx,
@@ -226,16 +241,18 @@ function M.format_multiple_result_sets(result_sets, user_config)
       local json_columns = require("enhance.json_detector").detect_json_columns(headers, rows, nil, explicit_nulls)
 
       -- Format header
-      table.insert(all_lines, format_row(headers, widths, config))
+      local header_line = format_row(headers, widths, config)
+      table.insert(all_lines, header_line)
 
       -- Add separator
       table.insert(all_lines, generate_separator(widths, config))
 
       -- Format data rows
       for row_idx, row in ipairs(rows) do
-        table.insert(all_lines, format_row(row, widths, config))
+        local line, byte_widths = format_row(row, widths, config)
+        table.insert(all_lines, line)
         row_map[#all_lines] = {
-          values = row, widths = widths, json_columns = json_columns,
+          values = row, widths = widths, byte_widths = byte_widths, json_columns = json_columns,
           explicit_nulls = explicit_nulls,
           column_types = result_set.column_types,
           rows = rows, headers = headers, row_idx = row_idx,

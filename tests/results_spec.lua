@@ -126,6 +126,18 @@ describe("enhance.results", function()
       assert.equals('1\t' .. full, vim.fn.getreg('"'))
     end)
 
+    it('uses UTF-8 byte positions for selecting cells after a wide Unicode value', function()
+      local lines, row_map = require('enhance.formatter').format({
+        headers = { 'Name', 'Count' }, rows = { { '界界', '7' } },
+      })
+      vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+      vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', row_map)
+      local count_start = 2 + row_map[3].byte_widths[1] + 3
+      vim.api.nvim_win_set_cursor(0, { 3, count_start })
+      results.copy_cell()
+      assert.equals('7', vim.fn.getreg('"'))
+    end)
+
     it("shows the original truncated value with its SQL type color in a popup", function()
       local full = string.rep('1234567890', 12)
       local lines, row_map = require('enhance.formatter').format({

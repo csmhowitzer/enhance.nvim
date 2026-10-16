@@ -1,4 +1,47 @@
 describe('CLI credential isolation', function()
+  it('bounds synchronous catalog/probe commands and reports missing executables', function()
+    local cli = require('enhance.db.cli_credentials')
+    local old_system = vim.system
+    vim.system = function(_, opts)
+      assert.equals(30000, opts.timeout)
+      return { wait = function() return { stdout = '', stderr = '', code = 124 } end }
+    end
+    local ok, err = pcall(function()
+      local output, code = cli.system({ 'psql' }, {}, 'postgresql')
+      assert.equals(124, code)
+      assert.matches('timed out', output)
+      vim.system = function() error('executable not found') end
+      output, code = cli.system({ 'missing' }, {}, 'postgresql')
+      assert.equals(-1, code)
+      assert.matches('Failed to start', output)
+    end)
+    vim.system = old_system
+    if not ok then error(err) end
+  end)
+
+  it('returns probe results asynchronously without waiting on a CLI', function()
+    local cli = require('enhance.db.cli_credentials')
+    local old_system = vim.system
+    local finish, output, exit_code
+    vim.system = function(_, opts, callback)
+      assert.equals(30000, opts.timeout)
+      assert.equals('private', opts.env.PGPASSWORD)
+      finish = callback
+      return { kill = function() end }
+    end
+    local ok, err = pcall(function()
+      cli.system_async({ 'psql' }, { password = 'private' }, 'postgresql', function(text, code)
+        output, exit_code = text, code
+      end)
+      assert.is_nil(output)
+      finish({ stdout = '1', code = 0 })
+      assert.is_true(vim.wait(200, function() return output ~= nil end, 10))
+      assert.equals('1', output)
+      assert.equals(0, exit_code)
+    end)
+    vim.system = old_system
+    if not ok then error(err) end
+  end)
   it('keeps SQL Server and MySQL passwords out of command arguments', function()
     local sql = require('enhance.db.sqlserver').build_cmd({
       server = 'localhost', database = 'db', user = 'sa', password = 'sql-private',

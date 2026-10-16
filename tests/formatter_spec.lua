@@ -8,6 +8,18 @@ describe("formatter", function()
   end)
 
   describe("calculate_column_widths", function()
+    it('aligns wide characters and preserves headers longer than the data cap', function()
+      local header = string.rep('h', 54)
+      local lines, row_map = formatter.format({ headers = { '漢', header },
+        rows = { { 'é', string.rep('界', 30) } } })
+      assert.equals(3, row_map[3].widths[1])
+      assert.equals(54, row_map[3].widths[2])
+      assert.equals(header, lines[1]:match('|%s+([^|]-)%s+|%s*$'))
+      assert.equals(vim.fn.strdisplaywidth(lines[1]), vim.fn.strdisplaywidth(lines[3]))
+      assert.equals(1, vim.fn.strdisplaywidth(formatter._truncate_value('é界', 1, '…')))
+      assert.equals('é…', formatter._truncate_value('é界', 2, '…'))
+      assert.equals('é ', formatter._pad_value('é', 2))
+    end)
     it("should calculate widths based on headers", function()
       local headers = { "ID", "Name", "Email" }
       local rows = {}

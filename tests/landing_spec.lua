@@ -1,6 +1,6 @@
 describe('enhance landing page', function()
   local explorer
-  local original_test_connection
+  local original_test_connection, original_test_connection_async
   local original_system, original_cli_system, original_pin_list, original_pin_toggle
   local original_dashboard_fetches
   local original_table_fetches
@@ -11,6 +11,7 @@ describe('enhance landing page', function()
     package.loaded['enhance.explorer'] = nil
     explorer = require('enhance.explorer')
     original_test_connection = require('enhance.executor').test_connection
+    original_test_connection_async = require('enhance.executor').test_connection_async
     original_system = vim.fn.system
     original_cli_system = require('enhance.db.cli_credentials').system
     local pins = require('enhance.dashboard_pins')
@@ -25,6 +26,7 @@ describe('enhance landing page', function()
   after_each(function()
     if original_setreg then vim.fn.setreg = original_setreg; original_setreg = nil end
     require('enhance.executor').test_connection = original_test_connection
+    require('enhance.executor').test_connection_async = original_test_connection_async
     vim.fn.system = original_system
     require('enhance.db.cli_credentials').system = original_cli_system
     local pins = require('enhance.dashboard_pins')
@@ -393,6 +395,7 @@ describe('enhance landing page', function()
     local conn = { name = 'Menu Demo', type = 'example', database = 'demo' }
     require('enhance.connections').setup({ conn })
     require('enhance.executor').test_connection = function() return true end
+    require('enhance.executor').test_connection_async = function(_, cb) cb(true) end
     explorer.start()
     explorer._handle_enter(3)
 
@@ -415,6 +418,7 @@ describe('enhance landing page', function()
     local conn = { name = 'Pin menu test', type = 'sqlite', path = 'test.db' }
     require('enhance.connections').setup({ conn })
     require('enhance.executor').test_connection = function() return true end
+    require('enhance.executor').test_connection_async = function(_, cb) cb(true) end
     vim.fn.system = function() return 'Artists\nAlbums\n' end
     require('enhance.db.cli_credentials').system = function() return 'Artists\nAlbums\n', 0 end
     local pins = require('enhance.dashboard_pins')
@@ -426,6 +430,8 @@ describe('enhance landing page', function()
     end
 
     explorer.start()
+    -- The tree renders catalog lookups asynchronously; prefill this menu fixture.
+    explorer._fetch_tables(conn, true)
     explorer._handle_enter(3)
     local function line_with(needle)
       for i, line in ipairs(explorer._build_explorer_content()) do
@@ -637,7 +643,9 @@ describe('enhance landing page', function()
     data.fetch_sqlserver_rows = function() end
     data.fetch_database_size = function() end
     require('enhance.executor').test_connection = function() return true end
+    require('enhance.executor').test_connection_async = function(_, cb) cb(true) end
     explorer.start()
+    explorer._fetch_tables(conn, true)
     explorer._handle_enter(3)
     local function line_with(needle)
       for i, line in ipairs(explorer._build_explorer_content()) do

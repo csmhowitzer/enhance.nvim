@@ -135,5 +135,27 @@ describe("enhance.connections", function()
       assert.equals("DB2", connections.get_current().name)
     end)
   end)
-end)
 
+  it('connects asynchronously and ignores an older probe after a newer selection', function()
+    local executor = require('enhance.executor')
+    local old_probe, old_notify = executor.test_connection_async, vim.notify
+    local callbacks, cancelled = {}, 0
+    executor.test_connection_async = function(_, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() cancelled = cancelled + 1 end }
+    end
+    vim.notify = function() end
+    local ok, err = pcall(function()
+      local first, second = { name = 'First' }, { name = 'Second' }
+      connections.connect_async(first)
+      connections.connect_async(second)
+      assert.equals(1, cancelled)
+      callbacks[1](true)
+      assert.is_nil(connections.get_current())
+      callbacks[2](true)
+      assert.equals('Second', connections.get_current().name)
+    end)
+    executor.test_connection_async, vim.notify = old_probe, old_notify
+    if not ok then error(err) end
+  end)
+end)

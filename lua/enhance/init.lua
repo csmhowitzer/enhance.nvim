@@ -12,35 +12,7 @@ local M = {}
 ---@field status_line table Status line configuration
 
 ---@type EnhanceConfig
-local default_config = {
-  enabled = true,
-  connections = {},  -- For backward compatibility with tests
-  connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
-  format_results = true,  -- Enable consistent result formatting (parser + formatter)
-  keymaps = {
-    execute_query = "<F5>",
-    save_query = ":w",
-  },
-  ui = {
-    results_position = "split", -- "split", "vsplit", "tab"
-    show_query_time = true,
-    dashboard = { card_border = 'EnhanceDashboardBorder' },
-  },
-  status_line = {
-    enabled = true,
-    position = "top",  -- 'top' | 'bottom' | 'none'
-    highlights = {
-      label = "EnhanceStatusLabel",
-      value = "EnhanceStatusValue",
-      connection = "EnhanceStatusConnection",
-      db_type = "EnhanceStatusDBType",
-      timestamp = "EnhanceStatusTimestamp",
-      separator = "EnhanceStatusSeparator",
-      line_number = "EnhanceLineNumber",
-      line_number_accent = "EnhanceLineNumberAccent",
-    },
-  },
-}
+local default_config = require('enhance.config').defaults()
 
 ---@type EnhanceConfig
 M.config = {}
@@ -208,7 +180,12 @@ end
 ---@param opts EnhanceConfig? User configuration options
 function M.setup(opts)
   -- Merge user config with defaults
-  M.config = vim.tbl_deep_extend("force", default_config, opts or {})
+  if opts ~= nil and type(opts) ~= 'table' then error('Enhance setup options must be a table', 2) end
+  local config = require('enhance.config')
+  local candidate = config.merge(opts)
+  local valid, err = config.validate_config(candidate)
+  if not valid then error('Invalid Enhance configuration: ' .. err, 2) end
+  M.config = candidate
 
   if not M.config.enabled then
     return
@@ -228,11 +205,7 @@ function M.setup(opts)
   -- Initialize modules - load connections from file
   require("enhance.connections").setup(M.config.connections_file)
 
-  -- Setup global keymaps for JSON viewer
-  vim.keymap.set('n', 'gj', function()
-    require("enhance.json_viewer").show()
-  end, { desc = 'Enhance: Show JSON viewer' })
-
+  -- Keep native gj movement; JSON viewer uses <leader>dj and results-buffer mappings.
   vim.keymap.set('n', '<leader>dj', function()
     require("enhance.json_viewer").show()
   end, { desc = 'Enhance: Display JSON field' })

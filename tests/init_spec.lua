@@ -27,6 +27,17 @@ describe("enhance.init", function()
   end)
   
   describe("setup", function()
+    it('shares defaults with config and rejects invalid options before changing state', function()
+      local config = require('enhance.config')
+      assert.same(config.defaults(), enhance._default_config)
+      enhance.setup({ enabled = false })
+      local previous = enhance.get_config()
+      assert.has_error(function() enhance.setup({ ui = { results_position = 'diagonal' } }) end)
+      assert.equals(previous, enhance.get_config())
+      assert.has_error(function() enhance.setup({ connections = 'invalid' }) end)
+      assert.has_error(function() enhance.setup({ status_line = { position = 'middle' } }) end)
+      assert.has_error(function() enhance.setup({ enabled = 'yes' }) end)
+    end)
     it("should merge user config with defaults", function()
       enhance.setup({
         enabled = false,
@@ -159,4 +170,3 @@ describe("enhance.init", function()
     end)
   end)
 end)
-

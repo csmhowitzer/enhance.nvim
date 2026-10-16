@@ -356,6 +356,15 @@ function M.display(lines, connection, query_bufnr, metadata)
     end
   end
 
+  local generation = (vim.b[buf].enhance_render_generation or 0) + 1
+  vim.b[buf].enhance_render_generation = generation
+  local function is_current()
+    return vim.api.nvim_buf_is_valid(buf) and vim.b[buf].enhance_render_generation == generation
+  end
+  -- Do not leave the previous query's JSON source available on errors or raw output.
+  vim.b[buf].enhance_parsed_result = nil
+  vim.b[buf].enhance_json_columns = nil
+
   -- Build and store line number mapping for data rows
   local line_number_mapping = build_line_number_mapping(lines, config)
   vim.api.nvim_buf_set_var(buf, 'enhance_line_numbers', line_number_mapping)
@@ -433,6 +442,7 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Use vim.schedule to ensure highlights are applied after buffer is fully rendered
   if metadata and config.status_line and config.status_line.enabled and config.status_line.position ~= 'none' and status_highlights then
     vim.schedule(function()
+      if not is_current() then return end
       -- Re-define highlights to ensure they exist (in case colorscheme changed)
       require("enhance").setup_highlights()
       apply_status_line_highlight(buf, config, config.status_line.position, status_highlights)
@@ -474,25 +484,27 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Apply error highlighting if this is an error display
   if metadata and metadata.is_error then
     vim.schedule(function()
+      if not is_current() then return end
       M.apply_error_highlighting(buf, config, metadata)
     end)
   end
 
   -- Apply NULL highlighting to result cells
   vim.schedule(function()
+    if not is_current() then return end
     M.apply_null_highlighting(buf, config)
   end)
 
   -- Apply JSON highlighting to detected JSON columns
-  if json_columns or metadata and metadata.result_rows then
-    vim.schedule(function()
-      M.apply_json_highlighting(buf, config, json_columns, metadata)
-    end)
-  end
+  vim.schedule(function()
+    if not is_current() then return end
+    M.apply_json_highlighting(buf, config, json_columns or {}, metadata)
+  end)
 
   -- Type colors use SQL Server column metadata; other databases stay plain.
   if metadata and metadata.result_rows then
     vim.schedule(function()
+      if not is_current() then return end
       M.apply_type_highlighting(buf, config, metadata)
     end)
   end
@@ -502,6 +514,7 @@ function M.display(lines, connection, query_bufnr, metadata)
   -- Refresh explorer to show updated results timestamp
   -- Use vim.schedule to defer UI update to main event loop (we're in async callback)
   vim.schedule(function()
+    if not is_current() then return end
     explorer.refresh_explorer()
   end)
 end
@@ -709,7 +722,7 @@ function M.apply_type_highlighting(bufnr, config, metadata)
       local group = type_highlight(type_name)
       if group and value ~= nil and value ~= vim.NIL and value ~= '' and (row.explicit_nulls or value ~= 'NULL')
           and not (row.json_columns and row.json_columns[col] and json_utils.is_json(value)) then
-        local start_col, end_col = column_range(row.widths, col)
+        local start_col, end_col = column_range(row.byte_widths or row.widths, col)
         vim.api.nvim_buf_add_highlight(bufnr, ns_id, group, line_num + offset - 1, start_col, end_col)
       end
     end
@@ -728,7 +741,7 @@ function M.show_cell()
   local cursor_col = vim.api.nvim_win_get_cursor(0)[2]
   local column
   for i = 1, #row.widths do
-    local start_col, end_col = column_range(row.widths, i)
+    local start_col, end_col = column_range(row.byte_widths or row.widths, i)
     if cursor_col >= start_col and cursor_col < end_col then
       column = i
       break
@@ -848,7 +861,7 @@ function M.navigate(kind, direction)
   local col_index = 0
   if current_row > 0 then
     for i = 1, #row.widths do
-      local start_col = column_range(row.widths, i)
+      local start_col = column_range(row.byte_widths or row.widths, i)
       if cursor[2] < start_col then break end
       col_index = i
     end
@@ -856,7 +869,7 @@ function M.navigate(kind, direction)
   local target_col = col_index + direction
   if target_col < 1 then target_col = #row.widths end
   if target_col > #row.widths then target_col = 1 end
-  local start_col = column_range(row.widths, target_col)
+  local start_col = column_range(row.byte_widths or row.widths, target_col)
   vim.api.nvim_win_set_cursor(0, { line, start_col })
 end
 
@@ -880,7 +893,7 @@ function M.copy_cell()
 
   local col = vim.api.nvim_win_get_cursor(0)[2]
   for i = 1, #row.widths do
-    local start_col, end_col = column_range(row.widths, i)
+    local start_col, end_col = column_range(row.byte_widths or row.widths, i)
     if col >= start_col and col < end_col then
       local value = row.values[i]
       copy_text((value == nil or value == vim.NIL) and 'NULL' or tostring(value))
@@ -1120,7 +1133,7 @@ function M.apply_null_highlighting(bufnr, config)
         for col = 1, #row.widths do
           local value = row.values[col]
           if value == nil or value == vim.NIL then
-            local start_col, end_col = column_range(row.widths, col)
+            local start_col, end_col = column_range(row.byte_widths or row.widths, col)
             vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'EnhanceNull', tonumber(line_num) - 1, start_col, end_col)
           end
         end
@@ -1188,7 +1201,7 @@ function M.apply_json_highlighting(bufnr, config, json_columns, metadata)
     for line_num, row in pairs(metadata.result_rows) do
       for col, is_json in pairs(row.json_columns or {}) do
         if is_json and json_utils.is_json(row.values[col]) then
-          local start_col, end_col = column_range(row.widths, col)
+          local start_col, end_col = column_range(row.byte_widths or row.widths, col)
           vim.api.nvim_buf_add_highlight(bufnr, ns_id, 'EnhanceJsonCell', line_num + offset - 1, start_col, end_col)
         end
       end

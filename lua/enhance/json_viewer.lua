@@ -42,7 +42,7 @@ local function get_current_cell_info()
     local row = result_rows[line_num] or result_rows[tostring(line_num)]
     if row then
       local start_col = 2 -- "| " before the first cell
-      for col_idx, width in ipairs(row.widths) do
+      for col_idx, width in ipairs(row.byte_widths or row.widths) do
         if cursor[2] >= start_col and cursor[2] < start_col + width then
           return true, row.values[col_idx], row.row_idx, col_idx, 1
         end

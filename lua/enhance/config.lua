@@ -340,8 +340,32 @@ end
 ---@return boolean valid True if valid
 ---@return string? error Error message if invalid
 function M.validate_config(config)
+  if type(config) ~= 'table' then return false, 'configuration must be a table' end
+  config = M.merge(config)
+  if type(config.enabled) ~= 'boolean' then return false, 'enabled must be a boolean' end
+  if type(config.format_results) ~= 'boolean' then return false, 'format_results must be a boolean' end
+  if type(config.connections) ~= 'table' or not vim.islist(config.connections) then
+    return false, 'connections must be a list'
+  end
+  if type(config.connections_file) ~= 'string' and type(config.connections_file) ~= 'table' then
+    return false, 'connections_file must be a path or a list of connections'
+  end
+  if config.connections_file == '' then return false, 'connections_file must not be empty' end
+  if type(config.connections_file) == 'table' and not vim.islist(config.connections_file) then
+    return false, 'connections_file must be a list of connections'
+  end
+  if type(config.keymaps) ~= 'table' or type(config.keymaps.execute_query) ~= 'string' then
+    return false, 'keymaps.execute_query must be a string'
+  end
+  if type(config.ui) ~= 'table' or not vim.tbl_contains({ 'split', 'vsplit', 'tab' }, config.ui.results_position) then
+    return false, 'ui.results_position must be split, vsplit or tab'
+  end
+  if type(config.status_line) ~= 'table' or type(config.status_line.enabled) ~= 'boolean'
+      or not vim.tbl_contains({ 'top', 'bottom', 'none' }, config.status_line.position) then
+    return false, 'status_line requires an enabled boolean and top, bottom or none position'
+  end
   -- Allow connections = {} for testing, but validate each connection
-  if config.connections and type(config.connections) == "table" and #config.connections > 0 then
+  if #config.connections > 0 then
     local valid_names, names_err = M.validate_storage_names(config.connections)
     if not valid_names then return false, names_err end
     for i, conn in ipairs(config.connections) do
@@ -353,7 +377,7 @@ function M.validate_config(config)
   end
 
   -- Validate connections_file if provided
-  if config.connections_file then
+  if type(config.connections_file) == 'string' and config.connections_file ~= '' then
     local filepath = vim.fn.expand(config.connections_file)
     if vim.fn.filereadable(filepath) ~= 1 then
       -- File doesn't exist yet - that's okay, we'll create it

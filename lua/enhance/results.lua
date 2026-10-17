@@ -361,6 +361,15 @@ function M.display(lines, connection, query_bufnr, metadata)
   local function is_current()
     return vim.api.nvim_buf_is_valid(buf) and vim.b[buf].enhance_render_generation == generation
   end
+  -- Reused buffers must not retain colors from headers that are no longer present.
+  vim.api.nvim_buf_clear_namespace(buf, vim.api.nvim_create_namespace('enhance_result_set_headers'), 0, -1)
+  local has_result_set_headers = false
+  for _, line in ipairs(lines) do
+    if line:match('^Result Set %d+/%d+') then
+      has_result_set_headers = true
+      break
+    end
+  end
   -- Do not leave the previous query's JSON source available on errors or raw output.
   vim.b[buf].enhance_parsed_result = nil
   vim.b[buf].enhance_json_columns = nil
@@ -440,15 +449,17 @@ function M.display(lines, connection, query_bufnr, metadata)
 
   -- Apply status line highlight if metadata is provided
   -- Use vim.schedule to ensure highlights are applied after buffer is fully rendered
-  if metadata and config.status_line and config.status_line.enabled and config.status_line.position ~= 'none' and status_highlights then
+  if status_highlights or has_result_set_headers then
     vim.schedule(function()
       if not is_current() then return end
       -- Re-define highlights to ensure they exist (in case colorscheme changed)
       require("enhance").setup_highlights()
-      apply_status_line_highlight(buf, config, config.status_line.position, status_highlights)
+      if status_highlights then
+        apply_status_line_highlight(buf, config, config.status_line.position, status_highlights)
+      end
 
-      -- Apply result set highlighting in the same schedule call
-      if metadata.statement_count and metadata.statement_count > 1 then
+      -- A single statement can return multiple result sets; color actual headers.
+      if has_result_set_headers then
         M.apply_result_set_highlighting(buf, config)
       end
     end)

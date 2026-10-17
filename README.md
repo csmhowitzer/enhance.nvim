@@ -602,6 +602,33 @@ All databases support:
 - Auto-refresh on DDL operations
 - A default four-minute command deadline. Structured SQL Server/MySQL/PostgreSQL helpers allow up to 15 additional seconds to connect and five seconds of process grace; SQLite CLI statements and batch jobs use a four-minute deadline. SQLite's explicit per-statement de-batching applies that deadline to each statement.
 
+## Lua API
+
+`require("enhance.api")` is the stable interface for user scripts and other plugins
+(such as scratch-manager.nvim's DB pads). Other `enhance.*` modules are internal and may
+change. `api.version` is bumped only for breaking changes.
+
+| Function | Description |
+|----------|-------------|
+| `connections()` | All configured connections |
+| `get_connection(name)` | A connection by name, or `nil` |
+| `pick_connection(on_choice, opts?)` | Ask for a connection with `vim.ui.select` (`nil` when cancelled) |
+| `execute(query, { connection, bufnr? })` | Run a query (connection name or table) and show results in the results window; returns `ok, err` |
+| `attach(bufnr, connection)` | Make any SQL buffer connection-aware without adding it to the explorer: SQL Server table/column completion via vim-dadbod-completion |
+| `detach(bufnr)` / `attached(bufnr)` | Undo `attach` / the attached connection name |
+
+When results are displayed, enhance fires `User EnhanceQueryDone` with
+`data = { bufnr, result_bufnr, connection, row_count, execution_time, is_error }`:
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "EnhanceQueryDone",
+  callback = function(ev)
+    vim.notify(("%s: %s rows in %.0fms"):format(ev.data.connection, ev.data.row_count or "?", ev.data.execution_time or 0))
+  end,
+})
+```
+
 ## Customization
 
 ### Syntax Highlighting

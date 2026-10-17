@@ -522,6 +522,20 @@ function M.display(lines, connection, query_bufnr, metadata)
 
   vim.notify("Query results displayed", vim.log.levels.INFO)
 
+  -- Public completion event for integrations (see README: User EnhanceQueryDone)
+  pcall(vim.api.nvim_exec_autocmds, 'User', {
+    pattern = 'EnhanceQueryDone',
+    modeline = false,
+    data = {
+      bufnr = query_bufnr,
+      result_bufnr = buf,
+      connection = connection and connection.name,
+      row_count = metadata and metadata.row_count,
+      execution_time = metadata and metadata.execution_time,
+      is_error = metadata and metadata.is_error or false,
+    },
+  })
+
   -- Refresh explorer to show updated results timestamp
   -- Use vim.schedule to defer UI update to main event loop (we're in async callback)
   vim.schedule(function()

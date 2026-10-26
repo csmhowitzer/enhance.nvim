@@ -1,6 +1,9 @@
 -- Explicit developer opt-in only. Normal nvt runs never load personal credentials
 -- or contact a database. Queries are SELECT-only and create no server objects.
-if vim.env.ENHANCE_C03_LIVE ~= '1' then return end
+if vim.env.ENHANCE_C03_LIVE ~= '1' then
+  describe('C03 live database acceptance', function() pending('opt-in: set ENHANCE_C03_LIVE=1') end)
+  return
+end
 
 describe('C03 live database acceptance', function()
   local root = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':h:h')

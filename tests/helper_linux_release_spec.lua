@@ -1,6 +1,9 @@
 -- Maintainer opt-in only; ordinary nvt runs neither use Docker nor credentials.
 local selected = vim.env.ENHANCE_TEST_LINUX_RELEASE
-if not selected then return end
+if not selected then
+  describe('Ubuntu 24.04 release candidates', function() pending('opt-in: set ENHANCE_TEST_LINUX_RELEASE=arm64|amd64|both') end)
+  return
+end
 assert(selected == 'arm64' or selected == 'amd64' or selected == 'both', 'Invalid Linux release test architecture')
 
 describe('Ubuntu 24.04 release candidates', function()

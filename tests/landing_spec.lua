@@ -447,7 +447,7 @@ describe('enhance landing page', function()
     local maps = vim.api.nvim_buf_get_keymap(explorer_buf, 'n')
     local pin_map
     for _, map in ipairs(maps) do
-      if map.lhs:lower():find('dp', 1, true) then pin_map = map.callback; break end
+      if map.desc == 'Pin/unpin table on dashboard' then pin_map = map.callback; break end
     end
     assert.is_function(pin_map)
     pin_map()

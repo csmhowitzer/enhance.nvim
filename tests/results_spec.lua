@@ -32,7 +32,7 @@ describe("enhance.results", function()
       assert.is_true(found.r)
       assert.is_true(found.yc)
       assert.is_true(found.yr)
-      for _, lhs in ipairs({ 'ys', 'gk', '<M-k>', '<M-j>', '<M-h>', '<M-l>' }) do
+      for _, lhs in ipairs({ 'ys', 'gk', 'p', 'n', 'gh', 'gl' }) do
         assert.is_true(found[lhs], lhs .. ' must be buffer-local')
       end
       assert.is_nil(found.K, 'K is reserved for window navigation')

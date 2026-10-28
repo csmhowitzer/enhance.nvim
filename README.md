@@ -320,7 +320,7 @@ enhance.nvim uses a standard database URL connection string and a name property 
 
 ### Workflow
 
-1. **Start**: Press `<leader>de` or run `:EnhanceStart` to open the explorer and welcome page in an empty window
+1. **Start**: Press `<leader>oe` or run `:EnhanceStart` to open the explorer and welcome page in an empty window
 2. **Connect**: Press `<CR>` on a connection in explorer to test and expand it; the welcome page is removed and a database overview appears
 3. **New Query**: Press `o` on "New Query" or run `:EnhanceQuery`
 4. **Write**: Write your SQL query in the editor
@@ -354,7 +354,7 @@ the chart reports unavailable metadata if the catalog query cannot run. Press
 Chart rows have breathing room between bars. The **Pinned Tables** card sits
 beside Top 8 when the editor pane is wide enough, stacking below it when narrow.
 It holds up to eight tables per connection in alphabetical order. Pin a table in the
-explorer with `<leader>dp` on its row or choose **Pin to dashboard** under the
+explorer with `<leader>op` on its row or choose **Pin to dashboard** under the
 expanded table; the action becomes **Unpin from dashboard** once pinned. A yellow
 pin appears beside pinned tables. Pins persist in
 `stdpath('data')/enhance.nvim/<connection name>/pins.json`. SQL Server shows
@@ -420,12 +420,28 @@ sources = {
 
 ### Keymaps
 
+> **Changed in 2026-10:** the global keys moved from `<leader>d…` to `<leader>o…` (LazyVim uses
+> `<leader>d` for debugging and profiling). `<leader>od` (delete query file) now asks first.
+> Inside results and the JSON viewer, `n`/`p` (next/previous) and `gh`/`gl` (column left/right)
+> replace `Alt-hjkl` and `Ctrl-n/p/h/l`, which stay free for window navigation and other plugins.
+> To keep the old global keys: `require("enhance").setup({ keymaps = { prefix = "<leader>d" } })`.
+> `keymaps.prefix = false` turns the prefixed keys off.
+
+**Global** (prefix `keymaps.prefix`, default `<leader>o`):
+- `<leader>oe` - Start the workspace / toggle the explorer
+- `<leader>oq` - New query
+- `<leader>or` - Toggle results
+- `<leader>oj` - Open the JSON field under the cursor
+- `<leader>oh` - Toggle SQL Server type headers
+- `<leader>ox` - Disconnect
+- `<leader>od` - Delete the current query file (asks first)
+
 **Explorer:**
 - `<CR>` - Expand/collapse nodes (connections, folders, tables, buffers with results)
 - `o` - Open buffer, saved query, or create new query/script
 - `q` - Close explorer
-- `<leader>de` - Toggle explorer
-- `<leader>dp` - Pin/unpin the table under the explorer cursor (maximum eight per connection)
+- `<leader>oe` - Toggle explorer
+- `<leader>op` - Pin/unpin the table under the explorer cursor (maximum eight per connection)
 - `R` - Refresh explorer (clear cache and redraw)
 - `dd` or `D` - Delete file under cursor
 - `d` or `D` (visual) - Delete selected files
@@ -442,32 +458,31 @@ sources = {
 - `yr` - Copy full row as tab-separated values (without display truncation)
 - `ys` - Copy the current result set as tab-separated text, including `#` row numbers and headers
 - `gk` - Show any data cell, truncated or not, in a scrollable popup; detected JSON opens the JSON viewer (`q` or `Esc` closes either)
-- `<leader>dh` - Toggle SQL Server datatype labels below result headers (works from any buffer)
-- `Alt-k` / `Alt-j` - Previous / next result set (wraps at either end)
-- `Alt-h` / `Alt-l` - Previous / next column within the current data row (wraps within the row)
+- `<leader>oh` - Toggle SQL Server datatype labels below result headers (works from any buffer)
+- `p` / `n` - Previous / next result set (wraps at either end)
+- `gh` / `gl` - Previous / next column within the current data row (wraps within the row)
 - `h` / `j` / `k` / `l` - Native cursor movement
 - `Ctrl-d` / `Ctrl-u` - Scroll the results window
 
-**JSON Viewer** (open a JSON result cell with `gj` or `<leader>dj`):
-- `Alt-j` / `Alt-k` - Next / previous JSON row
-- `Alt-h` / `Alt-l` - Previous / next JSON column
-- `Ctrl-n` / `Ctrl-p` and `Ctrl-h` / `Ctrl-l` - Existing row and column navigation
+**JSON Viewer** (open a JSON result cell with `gj` or `<leader>oj`):
+- `n` / `p` - Next / previous JSON row
+- `gh` / `gl` - Previous / next JSON column
 - `q` / `Esc` - Close the viewer
 
 The JSON viewer title includes the column name and SQL datatype when known,
 and updates as you navigate rows or JSON columns.
 
 These normal-mode mappings are local to results buffers. Copy mappings write to
-Neovim's unnamed register for `p` and the system clipboard for Cmd-V. Place the
+Neovim's unnamed register and the system clipboard for Cmd-V. Place the
 cursor on a data row for `yc` or `yr` (`yc` requires a cell); `ys` works anywhere
-inside a result set, including its header or an empty table. `Alt-j/k` wrap
-between the last and first result sets. `Alt-h/l` wrap from the first/last
-column to the other end of the same row; `Alt-l` enters the first data row
+inside a result set, including its header or an empty table. `n`/`p` wrap
+between the last and first result sets. `gh`/`gl` wrap from the first/last
+column to the other end of the same row; `gl` enters the first data row
 from the status line. `gk` shows the full value even if its table display is
 truncated. Its title is the column header and, when known, SQL data type;
 its border matches the cell's result color when one is assigned. On a JSON
 cell, `gk` opens the syntax-highlighted JSON viewer instead.
-The non-JSON cell popup has padding around short values. `<leader>dh` adds a
+The non-JSON cell popup has padding around short values. `<leader>oh` adds a
 color-matched datatype row between each SQL Server table's column names and
 separator, including empty tables when type metadata is available. It starts
 hidden and toggles across open results without changing copied data.

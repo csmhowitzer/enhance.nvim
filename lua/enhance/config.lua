@@ -40,6 +40,10 @@ function M.defaults()
     connections_file = vim.fn.expand("~/.local/share/enhance/connections.json"),
     format_results = true,  -- Enable consistent result formatting (parser + formatter)
     keymaps = {
+      -- Prefix for the global keys (<prefix>e explorer, q new query, r results, j JSON, h type headers,
+      -- x disconnect, d delete query file, asks first) and the explorer's pin (<prefix>p). false = no prefixed keys.
+      -- Was <leader>d before 2026-10 (LazyVim's debug group); set prefix = "<leader>d" to keep the old keys.
+      prefix = "<leader>o",
       execute_query = "<F5>",
       save_query = ":w",
     },
@@ -356,6 +360,10 @@ function M.validate_config(config)
   end
   if type(config.keymaps) ~= 'table' or type(config.keymaps.execute_query) ~= 'string' then
     return false, 'keymaps.execute_query must be a string'
+  end
+  local prefix = config.keymaps.prefix
+  if prefix ~= nil and prefix ~= false and type(prefix) ~= 'string' then
+    return false, 'keymaps.prefix must be a string or false'
   end
   if type(config.ui) ~= 'table' or not vim.tbl_contains({ 'split', 'vsplit', 'tab' }, config.ui.results_position) then
     return false, 'ui.results_position must be split, vsplit or tab'

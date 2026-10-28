@@ -3708,19 +3708,25 @@ function M.start()
 			handle_open(vim.fn.line("."))
 		end, { buffer = explorer_buf, desc = "Open buffer/query" })
 
-		vim.keymap.set('n', '<leader>dp', function()
-			local line = vim.api.nvim_get_current_line()
-			local info = parse_line(line, vim.fn.line('.'))
-			if info and (info.type == 'table' or info.type == 'table_pin') then
-				M.toggle_pin(info)
-			else
-				vim.notify('Place the cursor on a table to pin it', vim.log.levels.WARN)
-			end
-		end, { buffer = explorer_buf, desc = 'Pin/unpin table on dashboard' })
+		local pin_key = require('enhance').prefixed('p')
+		if pin_key then
+			vim.keymap.set('n', pin_key, function()
+				local line = vim.api.nvim_get_current_line()
+				local info = parse_line(line, vim.fn.line('.'))
+				if info and (info.type == 'table' or info.type == 'table_pin') then
+					M.toggle_pin(info)
+				else
+					vim.notify('Place the cursor on a table to pin it', vim.log.levels.WARN)
+				end
+			end, { buffer = explorer_buf, desc = 'Pin/unpin table on dashboard' })
+		end
 
-		vim.keymap.set("n", "<leader>de", function()
-			M.toggle()
-		end, { buffer = explorer_buf, desc = "Toggle explorer" })
+		local toggle_key = require("enhance").prefixed("e")
+		if toggle_key then
+			vim.keymap.set("n", toggle_key, function()
+				M.toggle()
+			end, { buffer = explorer_buf, desc = "Toggle explorer" })
+		end
 
 		vim.keymap.set("n", "R", function()
 			M.refresh()

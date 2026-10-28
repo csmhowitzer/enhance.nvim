@@ -39,7 +39,7 @@ describe('enhance.json_viewer result rows', function()
     for _, map in ipairs(vim.api.nvim_buf_get_keymap(0, 'n')) do
       mappings[map.lhs:lower()] = true
     end
-    for _, lhs in ipairs({ '<M-j>', '<M-k>', '<M-h>', '<M-l>', '<C-n>', '<C-p>', '<C-h>', '<C-l>' }) do
+    for _, lhs in ipairs({ 'n', 'p', 'gh', 'gl' }) do
       assert.is_true(mappings[lhs:lower()], lhs .. ' should work in the JSON viewer')
     end
     local content = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')

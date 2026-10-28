@@ -106,10 +106,13 @@ function M.setup_keymaps(bufnr)
     string.format(':<C-u>lua require("enhance.query").execute_visual_selection(%d)<CR>', bufnr),
     { buffer = bufnr, desc = "Execute selected SQL" })
 
-  -- Delete current file keymap
-  vim.keymap.set('n', '<leader>dd', function()
-    require("enhance.explorer").delete_file()
-  end, { buffer = bufnr, desc = "Delete current file" })
+  -- Delete current file (asks first)
+  local delete_key = require("enhance").prefixed("d")
+  if delete_key then
+    vim.keymap.set('n', delete_key, function()
+      require("enhance").confirm_delete_file()
+    end, { buffer = bufnr, desc = "Delete query file (asks first)" })
+  end
 end
 
 ---Execute the entire buffer content
@@ -125,9 +128,9 @@ function M.execute_current_query(bufnr)
       "No database connection established",
       "",
       "To execute queries, you need to:",
-      "1. Open the explorer with <leader>de",
+      "1. Open the explorer with " .. (require("enhance").prefixed("e") or ":EnhanceStart"),
       "2. Press <CR> on a connection to test/connect",
-      "3. Click 'New Query' or use <leader>dq",
+      "3. Click 'New Query' or use " .. (require("enhance").prefixed("q") or ":EnhanceQuery"),
       "",
       "Or click a table sub-item (List, Columns, etc.) to auto-execute a query.",
     })
@@ -160,9 +163,9 @@ function M.execute_visual_selection(bufnr)
       "No database connection established",
       "",
       "To execute queries, you need to:",
-      "1. Open the explorer with <leader>de",
+      "1. Open the explorer with " .. (require("enhance").prefixed("e") or ":EnhanceStart"),
       "2. Press <CR> on a connection to test/connect",
-      "3. Click 'New Query' or use <leader>dq",
+      "3. Click 'New Query' or use " .. (require("enhance").prefixed("q") or ":EnhanceQuery"),
       "",
       "Or click a table sub-item (List, Columns, etc.) to auto-execute a query.",
     })

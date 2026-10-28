@@ -142,6 +142,14 @@ Configuration options:
     List of database connections. Each connection is a table with
     database-specific fields. See |enhance-database-types| for details.
 
+{keymaps.prefix}                                     *enhance-config-keymaps-prefix*
+    Type: `string|false`
+    Default: `"<leader>o"`
+
+    Prefix for the global keys (see |enhance-keymaps-global|) and the
+    explorer's pin key. `false` turns them off. Before 2026-10 the keys
+    used `<leader>d`, LazyVim's debug group; set `"<leader>d"` to keep them.
+
 {ui.dashboard.card_border}                     *enhance-config-dashboard-border*
     Type: `string` (highlight group)
     Default: `EnhanceDashboardBorder` (purple, #cba6f7)
@@ -174,7 +182,7 @@ Configuration options:
     count in the background; estimates do not scan the actual table contents.
     Chart bars have a blank row between them. The pinned card sits beside
     Top 8 when space allows, or below it in a narrow editor pane. Pin up to
-    eight tables per connection with <leader>dp on their explorer rows, or use the Pin/Unpin
+    eight tables per connection with <leader>op on their explorer rows, or use the Pin/Unpin
     action under an expanded table. A pin icon marks pinned tables. The
     Pinned Tables panel shows them alphabetically, with SQL Server catalog row
     estimates as bars scaled to the largest pin, with blank rows between them.
@@ -278,12 +286,24 @@ enhance.get_config()                                     *enhance.get_config()*
 ==============================================================================
 6. KEYMAPS                                                *enhance-keymaps*
 
+Global Keymaps                                             *enhance-keymaps-global*
+
+Under |enhance-config-keymaps-prefix| (default <leader>o):
+
+<leader>oe              Start the workspace / toggle the explorer
+<leader>oq              New query
+<leader>or              Toggle results
+<leader>oj              Open the JSON field under the cursor
+<leader>oh              Toggle SQL Server type headers
+<leader>ox              Disconnect
+<leader>od              Delete the current query file (asks first)
+
 Explorer Keymaps                                         *enhance-keymaps-explorer*
 
 <CR>                    Expand/collapse connection or open item
 q                       Close explorer drawer
-<leader>de              Toggle explorer drawer
-<leader>dp              Pin/unpin table under cursor (up to eight per connection)
+<leader>oe              Toggle explorer drawer
+<leader>op              Pin/unpin table under cursor (up to eight per connection)
 dd                      Delete file under cursor
 D                       Delete file under cursor (same as dd)
 d (visual)              Delete selected files in visual mode
@@ -323,10 +343,10 @@ gk                      Show any cell (truncated or not) in a scrollable popup
                         q or Esc closes it
                         JSON is pretty-printed with JSON syntax highlighting;
                         non-JSON cells retain their result colors
-<leader>dh             Toggle SQL Server datatype labels under result headers
+<leader>oh             Toggle SQL Server datatype labels under result headers
                         Works from any buffer; labels start hidden
-<M-k> / <M-j>           Previous / next result set (Alt-k / Alt-j)
-<M-h> / <M-l>           Previous / next column (Alt-h / Alt-l)
+p / n                   Previous / next result set
+gh / gl                 Previous / next column
 h / j / k / l           Native cursor movement
                         These mappings are local to results buffers. Copying
                         uses full parsed values even if display is truncated,
@@ -340,11 +360,9 @@ h / j / k / l           Native cursor movement
 
 JSON Viewer Keymaps                                      *enhance-keymaps-json*
 
-gj / <leader>dj        Open JSON cell under cursor
-<M-j> / <M-k>           Next / previous JSON row (Alt-j / Alt-k)
-<M-h> / <M-l>           Previous / next JSON column (Alt-h / Alt-l)
-<C-n> / <C-p>           Next / previous JSON row (existing mappings)
-<C-h> / <C-l>           Previous / next JSON column (existing mappings)
+gj / <leader>oj        Open JSON cell under cursor
+n / p                   Next / previous JSON row
+gh / gl                 Previous / next JSON column
 q / <Esc>               Close JSON viewer
                         The title shows the column and known SQL data type;
                         it updates when changing rows or JSON columns.
@@ -418,7 +436,7 @@ date/time types use `EnhanceDateCell`. These colors follow result-column SQL
 types, not the appearance of their text: `varchar`/`nvarchar` dates and numbers
 remain plain. NULL and detected JSON retain their own highlights. Result-column
 types come directly from the executing driver; no extra describe query is run.
-Press <leader>dh to show or hide datatype labels beneath each result header.
+Press <leader>oh to show or hide datatype labels beneath each result header.
 Labels follow their column's color and are available for empty tables when
 SQL Server returns type metadata. The cell popup pads short values on all sides.
 

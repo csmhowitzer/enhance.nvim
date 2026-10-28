@@ -158,7 +158,7 @@ local function row_chart(rows, width)
 end
 
 local function pinned_tables(names, rows, width, chart)
-  if #names == 0 then return { 'Pin a table in explorer with <leader>dp' } end
+  if #names == 0 then return { 'Pin a table in explorer with ' .. (require('enhance').prefixed('p') or 'the Pin menu item') } end
   local body = {}
   local estimates = {}
   local identity = require('enhance.db.object_identity')

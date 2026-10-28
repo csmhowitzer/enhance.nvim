@@ -275,14 +275,11 @@ local function show_floating_window()
   -- Set buffer-local keymaps
   vim.keymap.set('n', 'q', function() M.close() end, { buffer = bufnr, nowait = true })
   vim.keymap.set('n', '<Esc>', function() M.close() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<C-n>', function() M.navigate_next() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<C-p>', function() M.navigate_prev() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<C-l>', function() M.navigate_next_column() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<C-h>', function() M.navigate_prev_column() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<M-j>', function() M.navigate_next() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<M-k>', function() M.navigate_prev() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<M-l>', function() M.navigate_next_column() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<M-h>', function() M.navigate_prev_column() end, { buffer = bufnr, nowait = true })
+  -- Same keys as the results buffer: n/p = next/previous row, gh/gl = column left/right
+  vim.keymap.set('n', 'n', function() M.navigate_next() end, { buffer = bufnr, nowait = true, desc = 'Next JSON row' })
+  vim.keymap.set('n', 'p', function() M.navigate_prev() end, { buffer = bufnr, nowait = true, desc = 'Previous JSON row' })
+  vim.keymap.set('n', 'gl', function() M.navigate_next_column() end, { buffer = bufnr, nowait = true, desc = 'Next JSON column' })
+  vim.keymap.set('n', 'gh', function() M.navigate_prev_column() end, { buffer = bufnr, nowait = true, desc = 'Previous JSON column' })
 end
 
 ---Close the floating window

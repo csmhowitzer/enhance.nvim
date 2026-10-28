@@ -609,8 +609,9 @@ function M.setup_keymaps(bufnr)
   end, { buffer = bufnr, desc = "Show full result cell" })
 
   for _, mapping in ipairs({
-    { '<M-k>', 'set', -1 }, { '<M-j>', 'set', 1 },
-    { '<M-h>', 'column', -1 }, { '<M-l>', 'column', 1 },
+    -- n/p = next/previous, gh/gl = column left/right; Alt+hjkl stay free for window/pane moves
+    { 'p', 'set', -1 }, { 'n', 'set', 1 },
+    { 'gh', 'column', -1 }, { 'gl', 'column', 1 },
   }) do
     vim.keymap.set('n', mapping[1], function()
       M.navigate(mapping[2], mapping[3])

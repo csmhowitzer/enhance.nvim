@@ -464,7 +464,7 @@ sources = {
 - `h` / `j` / `k` / `l` - Native cursor movement
 - `Ctrl-d` / `Ctrl-u` - Scroll the results window
 
-**JSON Viewer** (open a JSON result cell with `gj` or `<leader>oj`):
+**JSON Viewer** (open a JSON result cell with `gk` or `<leader>oj`):
 - `n` / `p` - Next / previous JSON row
 - `gh` / `gl` - Previous / next JSON column
 - `q` / `Esc` - Close the viewer

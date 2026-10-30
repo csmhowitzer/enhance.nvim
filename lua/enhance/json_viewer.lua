@@ -237,11 +237,11 @@ local function show_floating_window()
   local title = window_title(row_idx, total_rows)
 
   -- Build footer with navigation hints
-  local footer_parts = { " q: close", "Alt-j/k: rows" }
+  local footer_parts = { " q: close", "n/p: rows" }
 
   -- Add column navigation if multiple JSON columns exist
   if state.json_columns and vim.tbl_count(state.json_columns) > 1 then
-    table.insert(footer_parts, "Alt-h/l: columns")
+    table.insert(footer_parts, "gh/gl: columns")
   end
 
   local footer = " " .. table.concat(footer_parts, " | ") .. " "
@@ -275,8 +275,8 @@ local function show_floating_window()
   vim.wo[state.win].relativenumber = false
   
   -- Set buffer-local keymaps
-  vim.keymap.set('n', 'q', function() M.close() end, { buffer = bufnr, nowait = true })
-  vim.keymap.set('n', '<Esc>', function() M.close() end, { buffer = bufnr, nowait = true })
+  vim.keymap.set('n', 'q', function() M.close() end, { buffer = bufnr, nowait = true, desc = 'Close JSON viewer' })
+  vim.keymap.set('n', '<Esc>', function() M.close() end, { buffer = bufnr, nowait = true, desc = 'Close JSON viewer' })
   -- Same keys as the results buffer: n/p = next/previous row, gh/gl = column left/right
   vim.keymap.set('n', 'n', function() M.navigate_next() end, { buffer = bufnr, nowait = true, desc = 'Next JSON row' })
   vim.keymap.set('n', 'p', function() M.navigate_prev() end, { buffer = bufnr, nowait = true, desc = 'Previous JSON row' })

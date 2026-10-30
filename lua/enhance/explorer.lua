@@ -1233,7 +1233,7 @@ local function build_explorer_content()
 	end
 
 	table.insert(lines, "")
-	table.insert(lines, "Press <CR> to expand/collapse, o to open, q to close")
+	table.insert(lines, "<CR> expand · o open · q close")
 
 	return lines
 end
@@ -3733,6 +3733,10 @@ function M.start()
 		vim.keymap.set("n", "o", function()
 			handle_open(vim.fn.line("."))
 		end, { buffer = explorer_buf, desc = "Open buffer/query" })
+
+		vim.keymap.set("n", "q", function()
+			M.close()
+		end, { buffer = explorer_buf, nowait = true, desc = "Close explorer" })
 
 		local pin_key = require('enhance').prefixed('p')
 		if pin_key then

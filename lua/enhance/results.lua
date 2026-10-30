@@ -610,6 +610,16 @@ function M.setup_keymaps(bufnr)
     M.show_cell()
   end, { buffer = bufnr, desc = "Show full result cell" })
 
+  vim.keymap.set('n', 'q', function()
+    -- close the results window q is pressed in (the explorer's tracked one, or any other), never the last
+    local explorer, win = require('enhance.explorer'), vim.api.nvim_get_current_win()
+    if win == explorer.get_results_window() then
+      explorer.close_results()
+    elseif #vim.api.nvim_tabpage_list_wins(0) > 1 then
+      vim.api.nvim_win_close(win, false)
+    end
+  end, { buffer = bufnr, nowait = true, desc = "Close results" })
+
   for _, mapping in ipairs({
     -- n/p = next/previous, gh/gl = column left/right; Alt+hjkl stay free for window/pane moves
     { 'p', 'set', -1 }, { 'n', 'set', 1 },

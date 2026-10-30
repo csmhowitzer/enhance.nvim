@@ -37,39 +37,67 @@ function M.parse_if_json(str)
   return ok, ok and parsed or nil
 end
 
---- Pretty-print JSON string preserving key order
+--- Pretty-print a JSON string, keeping it exactly as written: key order, strings and escapes, number
+--- formats. Pure Lua (no jq/python3 process per view, which blocked 60-85 ms each on WSL); jq's layout
+--- with two-space indents and empty {} / [] kept on one line. Invalid JSON comes back unchanged.
 ---@param json_str string Original JSON string
 ---@return string Formatted JSON string with preserved key order
 function M.pretty_print_string(json_str)
-  -- Use jq if available for best formatting with preserved order
-  local jq_available = vim.fn.executable('jq') == 1
-
-  if jq_available then
-    local result = vim.fn.system('jq .', json_str)
-    if vim.v.shell_error == 0 then
-      return vim.trim(result)
+  if type(json_str) ~= 'string' or not pcall(vim.json.decode, json_str) then
+    return json_str
+  end
+  local out, depth, i, n = {}, 0, 1, #json_str
+  local function newline()
+    out[#out + 1] = '\n' .. string.rep('  ', depth)
+  end
+  while i <= n do
+    -- copy everything up to the next structural character, string or whitespace in one go
+    local j = json_str:find('[%s"{}%[%],:]', i)
+    if not j then
+      out[#out + 1] = json_str:sub(i)
+      break
+    end
+    if j > i then out[#out + 1] = json_str:sub(i, j - 1) end
+    local c = json_str:sub(j, j)
+    if c == '"' then
+      -- a string, escapes included, copied verbatim
+      local k = j + 1
+      while true do
+        local q = json_str:find('["\\]', k)
+        if not q then k = n; break end
+        if json_str:sub(q, q) == '\\' then k = q + 2 else k = q; break end
+      end
+      out[#out + 1] = json_str:sub(j, k)
+      i = k + 1
+    elseif c == '{' or c == '[' then
+      local close = c == '{' and '}' or ']'
+      local next_char = json_str:find('%S', j + 1)
+      if next_char and json_str:sub(next_char, next_char) == close then
+        out[#out + 1] = c .. close
+        i = next_char + 1
+      else
+        out[#out + 1] = c
+        depth = depth + 1
+        newline()
+        i = j + 1
+      end
+    elseif c == '}' or c == ']' then
+      depth = depth - 1
+      newline()
+      out[#out + 1] = c
+      i = j + 1
+    elseif c == ',' then
+      out[#out + 1] = ','
+      newline()
+      i = j + 1
+    elseif c == ':' then
+      out[#out + 1] = ': '
+      i = j + 1
+    else
+      i = j + 1 -- whitespace between tokens
     end
   end
-
-  -- Fallback: Use vim.json with --sort-keys=false (Neovim 0.10+)
-  -- Note: vim.json.encode doesn't preserve order, so we use Python as fallback
-  local python_available = vim.fn.executable('python3') == 1
-
-  if python_available then
-    local cmd = [[python3 -c "import sys, json; print(json.dumps(json.loads(sys.stdin.read()), indent=2))"]]
-    local result = vim.fn.system(cmd, json_str)
-    if vim.v.shell_error == 0 then
-      return vim.trim(result)
-    end
-  end
-
-  -- Last resort: Use our custom formatter (will sort keys alphabetically)
-  local ok, parsed = pcall(vim.json.decode, json_str)
-  if ok then
-    return M.pretty_print(parsed)
-  end
-
-  return json_str
+  return table.concat(out)
 end
 
 --- Pretty-print JSON with indentation (DEPRECATED - sorts keys alphabetically)

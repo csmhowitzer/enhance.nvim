@@ -17,6 +17,7 @@ local release_base = 'https://github.com/csmhowitzer/enhance.nvim/releases/downl
 ---@field root string Absolute cache directory
 ---@field nonce string Unique staging filename suffix
 ---@field exists fun(path: string): boolean
+---@field fingerprint fun(path: string): string? size/mtime/inode, nil when the file is missing
 ---@field digest fun(path: string): string
 ---@field mkdir fun(path: string)
 ---@field lock fun(path: string): boolean
@@ -83,6 +84,11 @@ local function defaults()
     platform = rid, root = vim.fn.stdpath('data') .. '/enhance/helper',
     nonce = tostring(uv.os_getpid()) .. '-' .. tostring(uv.hrtime()),
     exists = function(path) return uv.fs_stat(path) ~= nil end,
+    -- size, mtime and inode: a verified helper is hashed again only when one of these changes
+    fingerprint = function(path)
+      local stat = uv.fs_stat(path)
+      return stat and table.concat({ stat.size, stat.mtime.sec, stat.mtime.nsec, stat.ino }, ':') or nil
+    end,
     digest = digest,
     mkdir = function(path) vim.fn.mkdir(path, 'p', 448) end,
     lock = function(path) return uv.fs_mkdir(path, 448) ~= nil end,
@@ -174,18 +180,41 @@ function M.install()
   return path, err
 end
 
+---Helpers whose checksum matched this session: path -> fingerprint of the file at that time
+---@type table<string, string>
+local verified = {}
+
+---Resolve a verified cached helper. Hashing a 77 MB helper blocks for ~100 ms, so it's done once per
+---session per file; the file is hashed again whenever its size, mtime or inode changes.
+---@param manifest EnhanceHelperRelease
+---@param ops EnhanceHelperInstallOps
+---@param cache table<string, string> verified paths and their fingerprints
+---@return string? path
+---@return string? error
+local function resolve(manifest, ops, cache)
+  local artifact, validation_error = validate(manifest, ops.platform)
+  if not artifact then return nil, validation_error end
+  local target = ops.root .. '/' .. manifest.release .. '/' .. ops.platform .. '/' .. artifact.sha256 .. '-' .. artifact.name
+  local fingerprint = ops.fingerprint(target)
+  if not fingerprint then
+    cache[target] = nil
+    return nil, 'Helper is missing; rebuild enhance.nvim in lazy.nvim'
+  end
+  if cache[target] == fingerprint then return target end
+  if ops.digest(target) ~= artifact.sha256 then
+    cache[target] = nil
+    return nil, 'Helper checksum mismatch; rebuild enhance.nvim in lazy.nvim'
+  end
+  cache[target] = fingerprint
+  return target
+end
+
 ---Resolve a verified cached helper, without downloading or changing files.
 ---@return string? path
 ---@return string? error
 function M.path(db)
   local ok, path, err = pcall(function()
-    local manifest, ops = M.manifest(db), defaults()
-    local artifact, validation_error = validate(manifest, ops.platform)
-    if not artifact then return nil, validation_error end
-    local target = ops.root .. '/' .. manifest.release .. '/' .. ops.platform .. '/' .. artifact.sha256 .. '-' .. artifact.name
-    if not ops.exists(target) then return nil, 'Helper is missing; rebuild enhance.nvim in lazy.nvim' end
-    if ops.digest(target) ~= artifact.sha256 then return nil, 'Helper checksum mismatch; rebuild enhance.nvim in lazy.nvim' end
-    return target
+    return resolve(M.manifest(db), defaults(), verified)
   end)
   if not ok then return nil, tostring(path) end
   return path, err
@@ -193,6 +222,7 @@ end
 
 M._platform = platform
 M._install = install
+M._resolve = resolve
 M._digest = digest
 M._defaults = defaults
 return M

@@ -180,6 +180,41 @@ describe('helper release installation', function()
     assert.is_true(ok, tostring(err))
   end)
 
+  it('hashes a cached helper once per session, and again when the file changes', function()
+    local manifest = {
+      schema = 1, release = 'helper-v1.0.0', artifacts = {
+        ['linux-x64'] = { name = 'enhance-helper-linux-x64', sha256 = string.rep('a', 64) },
+      },
+    }
+    local digests, stamp = 0, 'size:1'
+    local ops = {
+      platform = 'linux-x64', root = '/cache',
+      fingerprint = function() return stamp end,
+      digest = function() digests = digests + 1; return string.rep('a', 64) end,
+    }
+    local cache = {}
+    local first = installer._resolve(manifest, ops, cache)
+    local second = installer._resolve(manifest, ops, cache)
+    assert.equals(first, second)
+    assert.equals(1, digests)
+
+    stamp = 'size:2' -- replaced or touched: verify again
+    installer._resolve(manifest, ops, cache)
+    assert.equals(2, digests)
+
+    ops.digest = function() digests = digests + 1; return string.rep('b', 64) end
+    stamp = 'size:3'
+    local path, err = installer._resolve(manifest, ops, cache)
+    assert.is_nil(path)
+    assert.matches('checksum mismatch', err)
+    assert.is_nil(next(cache), 'a mismatch is never remembered')
+
+    ops.fingerprint = function() return nil end
+    path, err = installer._resolve(manifest, ops, cache)
+    assert.is_nil(path)
+    assert.matches('missing', err)
+  end)
+
   it('never downloads while resolving an unpublished release', function()
     local original = installer.manifest
     installer.manifest = function() return { schema = 1, release = false, artifacts = {} } end

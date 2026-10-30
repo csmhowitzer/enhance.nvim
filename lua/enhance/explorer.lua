@@ -524,6 +524,17 @@ local function has_nerd_font()
 end
 
 local refresh_explorer
+local refresh_pending = false
+
+---Redraw the explorer once on the next tick, however many async results arrive in the meantime
+local function schedule_refresh()
+	if refresh_pending then return end
+	refresh_pending = true
+	vim.schedule(function()
+		refresh_pending = false
+		if M.is_open() then refresh_explorer() end
+	end)
+end
 local catalog_jobs = {}
 local catalog_listeners = {}
 local catalog_revision = 0
@@ -552,7 +563,7 @@ local function catalog_lookup(cache, key, cmd, connection, db_type, parse, async
 			if revision ~= catalog_revision then return end
 			catalog_jobs[key] = nil
 			cache[key] = result.code == 0 and parse(result.stdout or '') or {}
-			if M.is_open() then refresh_explorer() end
+			schedule_refresh() -- catalog lookups finish in bursts: one rebuild for all of them
 			for _, listener in ipairs(catalog_listeners[key] or {}) do listener() end
 			catalog_listeners[key] = nil
 		end)
@@ -1582,10 +1593,7 @@ refresh_explorer = function()
 	-- Apply syntax highlighting to status icons
 	apply_status_highlights()
 
-	-- Force redraw to update visible content (especially when explorer isn't focused)
-	vim.cmd("redraw")
-
-	-- Restore cursor position
+	-- Restore cursor position (Neovim redraws the changed buffer itself; no forced redraw)
 	if cursor_pos and explorer_win and vim.api.nvim_win_is_valid(explorer_win) then
 		-- Ensure cursor is within bounds
 		local max_line = #lines
@@ -1594,15 +1602,6 @@ refresh_explorer = function()
 		end
 		vim.api.nvim_win_set_cursor(explorer_win, cursor_pos)
 	end
-
-	-- Force immediate redraw
-	vim.schedule(function()
-		if explorer_win and vim.api.nvim_win_is_valid(explorer_win) then
-			vim.api.nvim_win_call(explorer_win, function()
-				vim.cmd("redraw!")
-			end)
-		end
-	end)
 end
 
 ---Simple confirmation dialog for file deletion

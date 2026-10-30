@@ -108,11 +108,12 @@ function M.disconnect()
   current_connection = nil
   vim.notify("Disconnected from: " .. conn_name, vim.log.levels.INFO)
 
-  -- Collapse tree and refresh explorer if it exists
+  -- Collapse the tree and redraw it. Not explorer.refresh(): that also drops every cache and kills
+  -- running catalog lookups, and warns when the explorer is hidden
   local explorer = require("enhance.explorer")
   if explorer.is_initialized() then
     explorer.collapse_connection(conn_name)
-    explorer.refresh()
+    explorer.refresh_explorer()
   end
 end
 
@@ -139,8 +140,9 @@ function M.connect_async(conn, callback, still_open)
       vim.notify('Connection failed: ' .. (error_msg or 'Unknown error'), vim.log.levels.ERROR)
     else
       M.set_current(conn)
+      -- redraw only: refresh() would kill the dashboard's catalog lookups set_current just started
       local explorer = require('enhance.explorer')
-      if explorer.is_initialized() then explorer.refresh() end
+      if explorer.is_initialized() then explorer.refresh_explorer() end
     end
     if callback then callback(success) end
   end)
@@ -168,10 +170,10 @@ function M.connect(conn)
   -- Connection succeeded - set as current
   M.set_current(conn)
 
-  -- Refresh explorer if it exists
+  -- Redraw the explorer (not refresh(): it would kill the catalog lookups set_current just started)
   local explorer = require("enhance.explorer")
   if explorer.is_initialized() then
-    explorer.refresh()
+    explorer.refresh_explorer()
   end
 
   return true

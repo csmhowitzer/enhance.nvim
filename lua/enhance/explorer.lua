@@ -222,6 +222,29 @@ local function is_tmp_file(filepath)
 		and filepath:sub(#root + 1):match('^[^/]+/tmp/[^/]+%.sql$') ~= nil
 end
 
+---Is this an enhance query file (tmp or saved) inside enhance's own storage? Delete and rename only ever
+---touch these, never a file elsewhere on disk.
+---@param filepath string
+---@return boolean
+local function is_query_file(filepath)
+	if type(filepath) ~= 'string' or filepath == '' then return false end
+	local root = vim.fn.resolve(vim.fn.fnamemodify(vim.fn.stdpath('data') .. '/enhance.nvim', ':p'))
+	local path = vim.fn.resolve(vim.fn.fnamemodify(filepath, ':p'))
+	root = root:gsub('/$', '') .. '/'
+	if path:sub(1, #root) ~= root then return false end
+	-- <connection>/<tmp|queries>/<name>.sql
+	local kind = path:sub(#root + 1):match('^[^/]+/([^/]+)/[^/]+%.sql$')
+	return kind == 'tmp' or kind == 'queries'
+end
+
+---A query file name typed by the user: one plain name, no path parts or control characters
+---@param input string
+---@return boolean
+local function valid_query_name(input)
+	return input ~= '.' and input ~= '..' and not input:find('/', 1, true)
+		and not input:find('\\', 1, true) and not input:find('%c')
+end
+
 ---Extract connection name from tmp filepath
 ---@param filepath string Full path to tmp file
 ---@return string? conn_name Connection name or nil
@@ -1709,9 +1732,14 @@ end
 
 ---Delete a file and close its buffer if open
 ---@param filepath string Full path to file
-local function delete_file_impl(filepath)
+---@param confirmed boolean? the user already confirmed (no second prompt)
+local function delete_file_impl(filepath, confirmed)
 	if not filepath or filepath == "" then
 		vim.notify("No file to delete", vim.log.levels.ERROR)
+		return
+	end
+	if not is_query_file(filepath) then
+		vim.notify("Not an Enhance query file, not deleted: " .. filepath, vim.log.levels.ERROR)
 		return
 	end
 
@@ -1791,7 +1819,7 @@ local function delete_file_impl(filepath)
 
 	-- Tmp files: delete immediately
 	-- Saved queries: show confirmation
-	if is_tmp then
+	if is_tmp or confirmed then
 		do_delete()
 	else
 		confirm_delete("Delete saved query '" .. filename .. "'?", function(confirmed)
@@ -1843,8 +1871,7 @@ local function handle_tmp_buffer_save(bufnr)
 				vim.notify("Save cancelled", vim.log.levels.INFO)
 				return
 			end
-			if input == '.' or input == '..' or input:find('/', 1, true)
-				or input:find('\\', 1, true) or input:find('%c') then
+			if not valid_query_name(input) then
 				vim.notify('Query filename must be a single file name', vim.log.levels.ERROR)
 				return
 			end
@@ -4364,6 +4391,28 @@ function M.new_query()
 	refresh_explorer()
 end
 
+---The query file <leader>od acts on: the current buffer when it's a query file, else the query editor's
+---@return string? filepath
+function M.current_query_file()
+	local candidates = { vim.api.nvim_get_current_buf() }
+	if query_editor_win and vim.api.nvim_win_is_valid(query_editor_win) then
+		table.insert(candidates, vim.api.nvim_win_get_buf(query_editor_win))
+	end
+	for _, bufnr in ipairs(candidates) do
+		local path = vim.api.nvim_buf_get_name(bufnr)
+		if is_query_file(path) then return path end
+	end
+	return nil
+end
+
+M._is_query_file = is_query_file
+
+---Delete one query file the user already confirmed (no second prompt)
+---@param filepath string
+function M.delete_confirmed(filepath)
+	delete_file_impl(filepath, true)
+end
+
 ---Delete a file (tmp or saved query)
 ---@param filename string? Optional filename to delete. If not provided, deletes current buffer
 function M.delete_file(filename)
@@ -4434,6 +4483,10 @@ function M.rename_saved_query(old_filename)
 			vim.notify("Rename cancelled", vim.log.levels.INFO)
 			return
 		end
+		if not valid_query_name(input) then
+			vim.notify('Query filename must be a single file name', vim.log.levels.ERROR)
+			return
+		end
 
 		-- Ensure .sql extension
 		local new_filename = input
@@ -4443,6 +4496,7 @@ function M.rename_saved_query(old_filename)
 
 		-- Build new filepath
 		local queries_dir = get_connection_queries_dir(active_connection)
+		if not queries_dir then return end
 		local new_filepath = queries_dir .. "/" .. new_filename
 
 		-- Check if new name already exists
@@ -4492,7 +4546,7 @@ function M.delete_files_bulk(filenames)
 	local filepaths = {}
 	for _, filename in ipairs(filenames) do
 		local filepath = find_file_by_name(filename, active_connection.name)
-		if filepath then
+		if filepath and is_query_file(filepath) then
 			table.insert(filepaths, filepath)
 		end
 	end

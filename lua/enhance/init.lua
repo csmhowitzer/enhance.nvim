@@ -262,11 +262,17 @@ function M.prefixed(suffix)
   return prefix .. suffix
 end
 
----Delete the current query file after a yes/no prompt
+---Delete the current query file after one yes/no prompt that names it. Only Enhance query files (tmp or
+---saved, in Enhance's storage) can be deleted; any other buffer is refused.
 function M.confirm_delete_file()
-  local name = vim.fn.expand("%:t")
-  if vim.fn.confirm("Delete " .. (name ~= "" and name or "this file") .. "?", "&Yes\n&No", 2) == 1 then
-    require("enhance.explorer").delete_file()
+  local explorer = require("enhance.explorer")
+  local path = explorer.current_query_file()
+  if not path then
+    vim.notify("Not an Enhance query file", vim.log.levels.WARN)
+    return
+  end
+  if vim.fn.confirm("Delete " .. vim.fn.fnamemodify(path, ":t") .. "?", "&Yes\n&No", 2) == 1 then
+    explorer.delete_confirmed(path)
   end
 end
 

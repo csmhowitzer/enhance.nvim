@@ -39,7 +39,6 @@ function M.create_query_buffer(connection)
     end
 
     vim.api.nvim_win_set_buf(0, existing_buf)
-    vim.notify("Switched to existing query buffer", vim.log.levels.INFO)
     return existing_buf
   end
 

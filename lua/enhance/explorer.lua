@@ -1811,9 +1811,6 @@ local function delete_file_impl(filepath, confirmed)
 
 		-- Refresh explorer (preserves visibility state)
 		refresh_explorer()
-
-		-- Notify user
-		vim.notify("Deleted: " .. filename, vim.log.levels.INFO)
 	end
 
 	-- Tmp files: delete immediately
@@ -1867,7 +1864,6 @@ local function handle_tmp_buffer_save(bufnr)
 			default = default_name,
 		}, function(input)
 			if not input or input == "" then
-				vim.notify("Save cancelled", vim.log.levels.INFO)
 				return
 			end
 			if not valid_query_name(input) then
@@ -1923,8 +1919,6 @@ local function handle_tmp_buffer_save(bufnr)
 
 			-- Refresh explorer (file is deleted, so it will disappear from list)
 			refresh_explorer()
-
-			vim.notify("Query saved: " .. filename, vim.log.levels.INFO)
 		end)
 	end)
 
@@ -3071,7 +3065,6 @@ local function open_metadata_script(connection, context, start)
 	local revision = script_revision
 	local selected_connection = require('enhance.connections').get_current()
 	local token, finished = {}, false
-	vim.notify('Loading ' .. context .. ' script...', vim.log.levels.INFO)
 	local process = start(function(script)
 		finished = true
 		script_jobs[token] = nil
@@ -3414,7 +3407,6 @@ local function handle_enter(line_num)
 		end
 
 		-- Test the new connection
-		vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
 		local executor = require("enhance.executor")
 		probe_revision = probe_revision + 1
 		if probe_process then probe_process:kill(9); probe_process = nil end
@@ -3576,7 +3568,6 @@ end
 function M.start()
 	-- If workspace already initialized, do nothing
 	if workspace_initialized then
-		vim.notify("Enhance workspace already started", vim.log.levels.INFO)
 		return
 	end
 	local initial_buf = vim.api.nvim_get_current_buf()
@@ -3647,9 +3638,6 @@ function M.start()
 					if auto_save_tmp_buffer(bufnr) then saved_count = saved_count + 1 end
 				end
 			end
-		end
-		if saved_count > 0 then
-			vim.notify(string.format("Auto-saved %d tmp buffer(s)", saved_count), vim.log.levels.INFO)
 		end
 		return saved_count
 	end
@@ -4071,7 +4059,6 @@ function M.toggle_pin(info)
 	else
 		dashboard_needs_update[conn.name] = true
 	end
-	vim.notify((pinned and 'Pinned ' or 'Unpinned ') .. info.table_name, vim.log.levels.INFO)
 end
 
 ---Return to the active connection's dashboard from the explorer.
@@ -4230,8 +4217,6 @@ function M.stop()
 	dashboard_pinned_details = {}
 	dashboard_needs_update = {}
 	dashboard_revision = {}
-
-	vim.notify("Enhance workspace stopped", vim.log.levels.INFO)
 end
 
 ---Check if explorer is open
@@ -4263,8 +4248,6 @@ function M.refresh()
 
 	-- Redraw the explorer
 	refresh_explorer()
-
-	vim.notify("Explorer refreshed", vim.log.levels.INFO)
 end
 
 ---Get the results window ID (for results module to reuse)
@@ -4483,7 +4466,6 @@ function M.rename_saved_query(old_filename)
 		default = current_name,
 	}, function(input)
 		if not input or input == "" then
-			vim.notify("Rename cancelled", vim.log.levels.INFO)
 			return
 		end
 		if not valid_query_name(input) then
@@ -4523,12 +4505,6 @@ function M.rename_saved_query(old_filename)
 
 		-- Refresh explorer
 		refresh_explorer()
-
-		-- Notify user
-		vim.notify(
-			string.format("Renamed: %s → %s", current_name, vim.fn.fnamemodify(new_filepath, ":t:r")),
-			vim.log.levels.INFO
-		)
 	end)
 end
 
@@ -4566,7 +4542,6 @@ function M.delete_files_bulk(filenames)
 	confirm_delete(message, function(confirmed)
 		if confirmed then
 			-- Delete all files
-			local deleted_count = 0
 			local failed_files = {}
 
 			for _, filepath in ipairs(filepaths) do
@@ -4576,8 +4551,6 @@ function M.delete_files_bulk(filenames)
 				-- Delete the file with error handling
 				local ok, result = pcall(vim.fn.delete, filepath)
 				if ok and result == 0 then
-					deleted_count = deleted_count + 1
-
 					-- Close buffer if it was open
 					if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 						-- Remove from tracking first
@@ -4606,14 +4579,6 @@ function M.delete_files_bulk(filenames)
 
 			-- Refresh explorer
 			refresh_explorer()
-
-			-- Show result
-			if deleted_count > 0 then
-				vim.notify(
-					string.format("Deleted %d file%s", deleted_count, deleted_count > 1 and "s" or ""),
-					vim.log.levels.INFO
-				)
-			end
 
 			if #failed_files > 0 then
 				vim.notify(

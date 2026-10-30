@@ -737,7 +737,6 @@ function M.show_table_dashboard(win, connection, name, state, open_reference, re
       return
     end
     vim.fn.setreg('+', state.script)
-    vim.notify('CREATE TABLE script copied to clipboard', vim.log.levels.INFO)
   end, { buffer = buf, desc = 'Copy CREATE TABLE script to clipboard' })
   vim.keymap.set('n', 'r', refresh, { buffer = buf, desc = 'Refresh table dashboard' })
   vim.keymap.set('n', '?', function() vim.cmd('help enhance') end,

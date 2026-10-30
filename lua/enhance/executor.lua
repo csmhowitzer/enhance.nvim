@@ -257,8 +257,6 @@ local function display_debatch(connection, query_bufnr, all_statement_results, t
 
   if had_error then
     vim.notify("Query execution failed with partial results", vim.log.levels.WARN)
-  else
-    vim.notify("Query executed successfully", vim.log.levels.INFO)
   end
 end
 
@@ -375,8 +373,6 @@ function M.execute_sqlite(connection, query, query_bufnr)
     vim.notify("Database file not found: " .. db_path, vim.log.levels.ERROR)
     return
   end
-
-  vim.notify("Executing query...", vim.log.levels.INFO)
 
   -- Detect statements BEFORE execution (Phase 1)
   local statement_detector = require("enhance.statement_detector")
@@ -619,7 +615,6 @@ M.cancel_sqlserver = M.cancel_query -- Compatibility alias for the shared query 
 ---@param query_bufnr number? Optional query buffer number
 local function execute_helper(connection, query, query_bufnr)
   if query_bufnr and not vim.api.nvim_buf_is_valid(query_bufnr) then return end
-  vim.notify('Executing ' .. connection.type .. ' query...', vim.log.levels.INFO)
   local key = query_bufnr or 0
   local state = sqlserver_queries[key]
   if not state then

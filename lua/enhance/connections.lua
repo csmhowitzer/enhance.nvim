@@ -56,8 +56,6 @@ function M.setup(connections_file_or_array)
 
   if #connections == 0 then
     vim.notify("No connections found in " .. connections_file_or_array, vim.log.levels.WARN)
-  else
-    vim.notify(string.format("Loaded %d connection(s) from %s", #connections, connections_file_or_array), vim.log.levels.INFO)
   end
 end
 
@@ -83,7 +81,6 @@ end
 ---@param conn table Connection to set as active
 function M.set_current(conn)
   current_connection = conn
-  vim.notify("Connected to: " .. conn.name, vim.log.levels.INFO)
   local explorer = package.loaded["enhance.explorer"]
   if explorer and explorer.show_dashboard then
     explorer.show_dashboard(conn)
@@ -106,7 +103,6 @@ function M.disconnect()
 
   local conn_name = current_connection.name
   current_connection = nil
-  vim.notify("Disconnected from: " .. conn_name, vim.log.levels.INFO)
 
   -- Collapse the tree and redraw it. Not explorer.refresh(): that also drops every cache and kills
   -- running catalog lookups, and warns when the explorer is hidden
@@ -129,7 +125,6 @@ function M.connect_async(conn, callback, still_open)
   end
   cancel_probe()
   local revision, previous = probe_revision, current_connection
-  vim.notify('Testing connection to ' .. conn.name .. '...', vim.log.levels.INFO)
   local finished = false
   local process = require('enhance.executor').test_connection_async(conn, function(success, error_msg)
     finished = true
@@ -158,7 +153,6 @@ function M.connect(conn)
   end
 
   -- Test the connection first
-  vim.notify("Testing connection to " .. conn.name .. "...", vim.log.levels.INFO)
   local executor = require("enhance.executor")
   local success, error_msg = executor.test_connection(conn)
 

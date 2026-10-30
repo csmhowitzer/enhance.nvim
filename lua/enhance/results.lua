@@ -522,8 +522,6 @@ function M.display(lines, connection, query_bufnr, metadata)
     end)
   end
 
-  vim.notify("Query results displayed", vim.log.levels.INFO)
-
   -- Public completion event for integrations (see README: User EnhanceQueryDone)
   pcall(vim.api.nvim_exec_autocmds, 'User', {
     pattern = 'EnhanceQueryDone',
@@ -740,7 +738,6 @@ function M.toggle_datatypes()
       M.render_datatypes(buf)
     end
   end
-  vim.notify('Result datatypes ' .. (show_datatypes and 'shown' or 'hidden'), vim.log.levels.INFO)
 end
 
 ---Color SQL Server result values by their declared result-column type.
@@ -1019,8 +1016,6 @@ function M._save_query_from_results()
     vim.api.nvim_buf_call(query_bufnr, function()
       vim.cmd('write!')  -- Use write! to force overwrite
     end)
-    local filename = vim.fn.fnamemodify(query_filepath, ":t")
-    vim.notify("Saved query: " .. filename, vim.log.levels.INFO)
   end
 end
 

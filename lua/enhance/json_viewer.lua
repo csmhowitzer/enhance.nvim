@@ -2,6 +2,7 @@
 -- Floating window for viewing and navigating JSON fields
 
 local M = {}
+local result_state = require('enhance.result_state')
 local json_utils = require("enhance.json_utils")
 
 -- Persistent state
@@ -37,7 +38,8 @@ local function get_current_cell_info()
 
   -- Formatted result rows carry their source values and rendered widths. Use
   -- them instead of counting pipes, which may also occur inside JSON values.
-  local has_rows, result_rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  local result_rows = result_state.get(bufnr, 'enhance_result_rows')
+  local has_rows = result_rows ~= nil
   if has_rows then
     local row = result_rows[line_num] or result_rows[tostring(line_num)]
     if row then
@@ -349,7 +351,8 @@ function M.show()
   if is_results and row_idx and col_idx and result_set_idx then
     -- We're in results buffer on a cell - get actual data from buffer metadata
     local bufnr = vim.api.nvim_get_current_buf()
-    local has_rows, result_rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+    local result_rows = result_state.get(bufnr, 'enhance_result_rows')
+    local has_rows = result_rows ~= nil
     local line_num = vim.api.nvim_win_get_cursor(0)[1]
     local row = has_rows and (result_rows[line_num] or result_rows[tostring(line_num)])
     if row then
@@ -367,8 +370,10 @@ function M.show()
       return
     end
 
-    local ok, parsed_result = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_parsed_result')
-    local ok2, json_columns = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_json_columns')
+    local parsed_result = result_state.get(bufnr, 'enhance_parsed_result')
+    local ok = parsed_result ~= nil
+    local json_columns = result_state.get(bufnr, 'enhance_json_columns')
+    local ok2 = json_columns ~= nil
 
     if ok and ok2 and parsed_result and json_columns then
       -- Handle multiple result sets

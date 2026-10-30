@@ -44,8 +44,8 @@ describe('explicit SQL NULL result consumers', function()
     vim.bo[buf].filetype = 'enhance-results'
     local lines, map = require('enhance.formatter').format(parsed())
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.b[buf].enhance_result_rows = map
-    vim.b[buf].enhance_result_sections = { { header_line = 1, headers = parsed().headers, rows = parsed().rows, row_lines = { 3 } } }
+    require('enhance.result_state').set(buf, 'enhance_result_rows', map)
+    require('enhance.result_state').set(buf, 'enhance_result_sections', { { header_line = 1, headers = parsed().headers, rows = parsed().rows, row_lines = { 3 } } })
     vim.api.nvim_win_set_cursor(0, { 3, 2 })
   end)
   after_each(function()
@@ -74,7 +74,7 @@ describe('explicit SQL NULL result consumers', function()
   end)
 
   it('does not give literal NULL text a NULL-colored popup', function()
-    local row = vim.b[buf].enhance_result_rows[3]
+    local row = require('enhance.result_state').get(buf, 'enhance_result_rows')[3]
     vim.api.nvim_win_set_cursor(0, { 3, row.widths[1] + row.widths[2] + 8 })
     require('enhance.results').show_cell()
     assert.are.same({ '', '  NULL  ', '' }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
@@ -82,7 +82,7 @@ describe('explicit SQL NULL result consumers', function()
   end)
 
   it('shows an empty-string cell as empty, not NULL', function()
-    local row = vim.b[buf].enhance_result_rows[3]
+    local row = require('enhance.result_state').get(buf, 'enhance_result_rows')[3]
     vim.api.nvim_win_set_cursor(0, { 3, row.widths[1] + 5 })
     require('enhance.results').show_cell()
     assert.are.same({ '', '    ', '' }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
@@ -95,7 +95,7 @@ describe('explicit SQL NULL result consumers', function()
     assert.equals(1, #marks)
     assert.equals(2, marks[1][2])
     assert.equals(2, marks[1][3])
-    results.apply_type_highlighting(buf, {}, { result_rows = vim.b[buf].enhance_result_rows })
+    results.apply_type_highlighting(buf, {}, { result_rows = require('enhance.result_state').get(buf, 'enhance_result_rows') })
     local types = vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace('enhance_type_highlight'), 0, -1, { details = true })
     for _, mark in ipairs(types) do assert.not_equals(2, mark[3]) end
   end)

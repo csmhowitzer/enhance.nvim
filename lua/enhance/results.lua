@@ -2,6 +2,7 @@
 -- Handles displaying query results in buffers
 
 local M = {}
+local result_state = require('enhance.result_state')
 local json_utils = require('enhance.json_utils')
 local show_datatypes = false
 
@@ -135,7 +136,8 @@ function M.setup_dynamic_cursorline(bufnr, win)
     local line = cursor[1]
 
     -- Get line number mapping from buffer variable
-    local ok, mapping = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_line_numbers')
+    local mapping = result_state.get(bufnr, 'enhance_line_numbers')
+    local ok = mapping ~= nil
     if not ok or not mapping then
       -- Fallback to default highlight if no mapping
       vim.wo[win].winhighlight = 'CursorLine:EnhanceCursorLine'
@@ -371,12 +373,12 @@ function M.display(lines, connection, query_bufnr, metadata)
     end
   end
   -- Do not leave the previous query's JSON source available on errors or raw output.
-  vim.b[buf].enhance_parsed_result = nil
-  vim.b[buf].enhance_json_columns = nil
+  result_state.set(buf, 'enhance_parsed_result', nil)
+  result_state.set(buf, 'enhance_json_columns', nil)
 
   -- Build and store line number mapping for data rows
   local line_number_mapping = build_line_number_mapping(lines, config)
-  vim.api.nvim_buf_set_var(buf, 'enhance_line_numbers', line_number_mapping)
+  result_state.set(buf, 'enhance_line_numbers', line_number_mapping)
 
   -- Keep original values and rendered column widths aligned with displayed rows.
   -- A reused buffer must lose its previous query's mapping.
@@ -386,9 +388,9 @@ function M.display(lines, connection, query_bufnr, metadata)
   for line_num, row in pairs(metadata and metadata.result_rows or {}) do
     result_rows[line_num + offset] = row
   end
-  vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', result_rows)
+  result_state.set(buf, 'enhance_result_rows', result_rows)
 
-  vim.api.nvim_buf_set_var(buf, 'enhance_result_sections', build_result_sections(lines, result_rows, metadata, offset))
+  result_state.set(buf, 'enhance_result_sections', build_result_sections(lines, result_rows, metadata, offset))
   M.render_datatypes(buf)
 
   -- Associate result buffer with query buffer
@@ -488,8 +490,8 @@ function M.display(lines, connection, query_bufnr, metadata)
     end
 
     -- Store parsed_result in buffer for JSON viewer access
-    vim.api.nvim_buf_set_var(buf, 'enhance_parsed_result', metadata.parsed_result)
-    vim.api.nvim_buf_set_var(buf, 'enhance_json_columns', json_columns)
+    result_state.set(buf, 'enhance_parsed_result', metadata.parsed_result)
+    result_state.set(buf, 'enhance_json_columns', json_columns)
   end
 
   -- Apply error highlighting if this is an error display
@@ -640,7 +642,8 @@ end
 local function current_result_row()
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].filetype ~= 'enhance-results' then return nil end
-  local ok, rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  local rows = result_state.get(bufnr, 'enhance_result_rows')
+  local ok = rows ~= nil
   if not ok then return nil end
   local line_num = vim.api.nvim_win_get_cursor(0)[1]
   return rows[line_num] or rows[tostring(line_num)]
@@ -689,7 +692,8 @@ function M.render_datatypes(bufnr)
   local ns = vim.api.nvim_create_namespace('enhance_datatype_headers')
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
   if not show_datatypes then return end
-  local ok, sections = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_sections')
+  local sections = result_state.get(bufnr, 'enhance_result_sections')
+  local ok = sections ~= nil
   if not ok then return end
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   for i, section in ipairs(sections) do
@@ -843,7 +847,8 @@ end
 local function current_section()
   local bufnr = vim.api.nvim_get_current_buf()
   if vim.bo[bufnr].filetype ~= 'enhance-results' then return end
-  local ok, sections = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_sections')
+  local sections = result_state.get(bufnr, 'enhance_result_sections')
+  local ok = sections ~= nil
   if not ok or #sections == 0 then return end
   local line = vim.api.nvim_win_get_cursor(0)[1]
   local index = 0
@@ -882,7 +887,7 @@ function M.navigate(kind, direction)
   end
   if kind ~= 'column' then return end
   local line = section.row_lines[math.max(1, current_row)]
-  local row = vim.b.enhance_result_rows[line]
+  local row = (result_state.get(0, 'enhance_result_rows') or {})[line]
   if type(row) ~= 'table' or #row.widths == 0 then return end
   local col_index = 0
   if current_row > 0 then
@@ -1021,7 +1026,8 @@ function M._line_number()
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- Get line number mapping from buffer variable
-  local ok, mapping = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_line_numbers')
+  local mapping = result_state.get(bufnr, 'enhance_line_numbers')
+  local ok = mapping ~= nil
   if not ok or not mapping then
     return ""
   end
@@ -1152,7 +1158,8 @@ function M.apply_null_highlighting(bufnr, config)
   vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 
   -- Structured rows carry actual NULL identity; never infer it from displayed text.
-  local has_rows, rows = pcall(vim.api.nvim_buf_get_var, bufnr, 'enhance_result_rows')
+  local rows = result_state.get(bufnr, 'enhance_result_rows')
+  local has_rows = rows ~= nil
   if has_rows then
     for line_num, row in pairs(rows) do
       if type(row) == 'table' and row.explicit_nulls then

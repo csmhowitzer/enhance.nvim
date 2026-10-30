@@ -48,7 +48,7 @@ describe('result field fidelity', function()
       vim.api.nvim_set_current_buf(buf)
       vim.bo[buf].filetype = 'enhance-results'
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-      vim.b[buf].enhance_result_rows = map
+      require('enhance.result_state').set(buf, 'enhance_result_rows', map)
       vim.api.nvim_win_set_cursor(0, { 3, 2 })
       require('enhance.results').copy_row()
       assert.equals('1\t\tlast-value', vim.fn.getreg('"'))

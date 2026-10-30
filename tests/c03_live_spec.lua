@@ -56,7 +56,7 @@ describe('C03 live database acceptance', function()
       vim.api.nvim_set_current_buf(buf)
       vim.bo[buf].filetype = 'enhance-results'
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, displayed.lines)
-      vim.b[buf].enhance_result_rows = metadata.result_rows
+      require('enhance.result_state').set(buf, 'enhance_result_rows', metadata.result_rows)
       vim.api.nvim_win_set_cursor(0, { line, 2 })
       original_results.copy_cell()
       assert.equals(expected[1], vim.fn.getreg('"'))

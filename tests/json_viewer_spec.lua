@@ -21,7 +21,7 @@ describe('enhance.json_viewer result rows', function()
     vim.api.nvim_win_set_buf(0, buf)
     vim.bo[buf].filetype = 'enhance-results'
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', row_map)
+    require('enhance.result_state').set(buf, 'enhance_result_rows', row_map)
     local data_line
     for line_num, row in pairs(row_map) do
       if row.row_idx == 1 then data_line = line_num end
@@ -65,7 +65,7 @@ describe('enhance.json_viewer result rows', function()
     vim.api.nvim_win_set_buf(0, buf)
     vim.bo[buf].filetype = 'enhance-results'
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.api.nvim_buf_set_var(buf, 'enhance_result_rows', row_map)
+    require('enhance.result_state').set(buf, 'enhance_result_rows', row_map)
     vim.api.nvim_win_set_cursor(0, { 3, 2 })
 
     viewer.show()

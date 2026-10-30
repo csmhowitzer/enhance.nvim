@@ -1,9 +1,9 @@
 # Test output logs
 *.log
 
-# Test scripts (not part of tests/ directory)
-test_*.lua
-demo_*.lua
+# Stray test scripts in the repo root (specs in tests/ are never ignored)
+/test_*.lua
+/demo_*.lua
 
 # Neovim swap files
 *.swp
@@ -29,11 +29,9 @@ connections.json
 # Maintainer-generated helper publish outputs and release assets
 /dist/
 
-# .NET helper build outputs
-/helper/bin/
-/helper/obj/
-/helper-tests/bin/
-/helper-tests/obj/
+# .NET helper build outputs (helper, helper-tests and any other helper-* project)
+/helper*/bin/
+/helper*/obj/
 
 # Go helper executables from direct maintainer builds
 /helper-postgres/helper-postgres
